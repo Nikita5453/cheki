@@ -23,7 +23,7 @@ const GH = (() => {
   }
 
   function connect({ token, repo }) {
-    let sha = null, etag = null, cache = null;
+    let sha = null, cache = null;
 
     async function call(path, opts = {}) {
       const headers = { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", ...(opts.headers || {}) };
@@ -50,13 +50,14 @@ const GH = (() => {
       return { private: !!j.private, canPush: !!j.permissions?.push };
     }
 
-    /* Reads data.json; `changed` is false when the server says nothing changed since the last read. */
+    /* Reads data.json; `changed` is false when the file is the same version as the last read.
+       No If-None-Match: GitHub can answer 304 with a stale copy, which kept recognized receipts looking pending. */
     async function load() {
-      const r = await call("/contents/data.json", { headers: etag ? { "If-None-Match": etag } : {} });
-      if (r.status === 304 && cache) return { data: cache, changed: false };
-      if (r.status === 404) { sha = null; etag = null; cache = EMPTY(); return { data: cache, changed: true }; }
+      const r = await call("/contents/data.json");
+      if (r.status === 404) { sha = null; cache = EMPTY(); return { data: cache, changed: true }; }
       if (!r.ok) await fail(r);
       const j = await r.json();
+      if (cache && j.sha === sha) return { data: cache, changed: false };
       let text;
       if (j.content) text = textFromB64(j.content);
       else {
@@ -65,7 +66,6 @@ const GH = (() => {
         text = await b.text();
       }
       sha = j.sha;
-      etag = r.headers.get("ETag");
       cache = normalize(JSON.parse(text));
       return { data: cache, changed: true };
     }
@@ -73,7 +73,7 @@ const GH = (() => {
     /* Applies fn to a fresh copy and writes it; on a concurrent change re-reads and re-applies. */
     async function mutate(fn, message) {
       for (let attempt = 0; attempt < 4; attempt++) {
-        if (attempt > 0 || !cache) { etag = null; await load(); }
+        if (attempt > 0 || !cache) await load();
         const next = structuredClone(cache);
         if (fn(next) === false) return cache;
         const body = { message, content: b64FromText(JSON.stringify(next, null, 1) + "\n") };
@@ -84,7 +84,7 @@ const GH = (() => {
         if (r.status === 409 || r.status === 422) continue;
         if (!r.ok) await fail(r);
         const j = await r.json();
-        sha = j.content.sha; etag = null; cache = next;
+        sha = j.content.sha; cache = next;
         return next;
       }
       const e = new Error("conflict"); e.status = 409; throw e;

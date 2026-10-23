@@ -6,6 +6,7 @@ const FOOD = ["Молочное и яйца", "Мясо и птица", "Рыб�
   "Крупы, макароны, мука", "Бакалея и консервы", "Масло, соусы, специи", "Сладости и снеки", "Чай и кофе", "Напитки",
   "Алкоголь", "Готовая еда", "Замороженное"];
 const CUR = "₴";
+const MONTHLY = 6200;
 const DEFAULT_REPO = "Nikita5453/cheki-data";
 const NO_SPLIT = "Без разбивки";
 const MAX_IMAGES = 4;
@@ -110,15 +111,45 @@ function fillPhotos(root) {
 }
 
 /* ---------- totals ---------- */
-function stats() {
+/* The same day k months after iso; a day the month lacks (31 Feb) becomes its last day. */
+function addMonths(iso, k) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(y, m - 1 + k, 1);
+  const dim = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
+  t.setDate(Math.min(d, dim));
+  return t.toLocaleDateString("sv-SE");
+}
+
+/* Budget months from the start date up to today. Each gets MONTHLY plus what the previous month saved;
+   overspending is not carried, the next month starts from MONTHLY again. */
+function periods() {
   const start = S.data.budget?.startDate;
-  const rs = S.data.receipts.filter(r => isDone(r) && (!start || (r.date || "") >= start));
-  let spent = 0;
+  if (!isoD(start)) return [];
+  const now = today(), out = [];
+  let carry = 0;
+  for (let k = 0; k < 1200; k++) {
+    const from = addMonths(start, k), to = addMonths(start, k + 1);
+    if (from > now) break;
+    const rs = S.data.receipts.filter(r => isDone(r) && (r.date || "") >= from && (r.date || "") < to);
+    const spent = r2(rs.reduce((s, r) => s + (+r.total || 0), 0));
+    const budget = r2(MONTHLY + carry);
+    out.push({ k, from, to, carry: r2(carry), budget, spent, left: r2(budget - spent), rs });
+    carry = Math.max(0, budget - spent);
+  }
+  return out;
+}
+
+function stats() {
+  const ps = periods();
+  const cur = ps[ps.length - 1] || null;
+  const start = S.data.budget?.startDate;
+  const rs = S.scope === "all" || !cur
+    ? S.data.receipts.filter(r => isDone(r) && (!start || (r.date || "") >= start))
+    : cur.rs;
   const cat = new Map(), typ = new Map();
   const add = (m, k, v) => m.set(k, (m.get(k) || 0) + v);
   for (const r of rs) {
     const total = +r.total || 0;
-    spent += total;
     let sum = 0;
     for (const it of r.items || []) {
       const p = +it.price || 0;
@@ -136,7 +167,7 @@ function stats() {
     const rest = types.slice(13).reduce((s, e) => s + e[1], 0);
     types = [...types.slice(0, 13), ["Остальное", rest]];
   }
-  return { rs, spent: r2(spent), cat: sorted(cat), typ: types };
+  return { ps, cur, cat: sorted(cat), typ: types };
 }
 
 /* ---------- render ---------- */
@@ -146,6 +177,7 @@ function render() {
   $("byCat").innerHTML = bars(st.cat);
   $("byType").innerHTML = bars(st.typ);
   renderList();
+  document.querySelectorAll("[data-scope]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.scope === S.scope)));
   const ok = S.state === "ready" && !S.busy;
   for (const id of ["camBtn", "galBtn", "manualBtn", "fab"]) $(id).disabled = !ok;
   schedulePoll();
@@ -169,42 +201,56 @@ function renderBudget(st) {
     if (!$("budgetForm")) el.innerHTML = budgetForm(b);
     return;
   }
-  const start = +b.startAmount || 0;
-  const left = r2(start - st.spent);
-  const pct = start > 0 ? st.spent / start * 100 : 0;
-  const days = Math.max(1, Math.round((parseD(today()) - parseD(b.startDate)) / 864e5) + 1);
-  const avg = st.spent / days;
-  let forecast = "";
-  if (avg > 0 && left > 0) {
-    const end = parseD(today()); end.setDate(end.getDate() + Math.floor(left / avg));
-    forecast = `При таком темпе хватит до ${end.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })}`;
-  } else if (left <= 0 && st.spent > 0) forecast = "Бюджет израсходован";
+  const c = st.cur;
+  if (!c) {
+    el.innerHTML = `<div class="slip-head"><span class="eyebrow">Бюджет</span><button class="link" data-act="edit-budget" type="button">Изменить</button></div>
+      <p class="hint">Бюджет начнётся ${fmtD(b.startDate)}. Каждый месяц: ${money(MONTHLY)}.</p>`;
+    return;
+  }
+  const pct = c.budget > 0 ? c.spent / c.budget * 100 : 100;
+  const daysIn = Math.round((parseD(today()) - parseD(c.from)) / 864e5) + 1;
+  const daysLeft = Math.max(1, Math.round((parseD(c.to) - parseD(today())) / 864e5));
+  const avg = c.spent / Math.max(1, daysIn);
+  const perDay = c.left > 0 ? c.left / daysLeft : 0;
+  const past = st.ps.slice(0, -1).reverse();
   el.innerHTML = `
-    <div class="slip-head"><span class="eyebrow">Бюджет</span><button class="link" data-act="edit-budget" type="button">Изменить</button></div>
+    <div class="slip-head"><span class="eyebrow">Месяц ${c.k + 1}</span><button class="link" data-act="edit-budget" type="button">Дата начала</button></div>
+    <p class="period">${periodLabel(c)}</p>
     <dl class="lines">
-      <div><dt>Старт</dt><dd>${fmtD(b.startDate)}</dd></div>
-      <div><dt>Сумма на старте</dt><dd>${money(start)}</dd></div>
-      <div><dt>Потрачено</dt><dd>${money(st.spent)}</dd></div>
+      <div><dt>Бюджет на месяц</dt><dd>${money(MONTHLY)}</dd></div>
+      ${c.carry > 0 ? `<div><dt>Перенос с прошлого</dt><dd class="pos">${signed(c.carry)}</dd></div>
+      <div><dt>Итого на месяц</dt><dd>${money(c.budget)}</dd></div>` : ""}
+      <div><dt>Потрачено</dt><dd>${money(c.spent)}</dd></div>
     </dl>
     <div class="rule"></div>
-    <div class="left ${left < 0 ? "over" : ""}"><span>${left < 0 ? "Перерасход" : "Остаток"}</span><strong>${money(Math.abs(left))}</strong></div>
-    <div class="meter ${left < 0 ? "over" : ""}" role="img" aria-label="Израсходовано ${Math.round(pct)}%"><i style="width:${Math.min(100, pct)}%"></i></div>
-    <p class="meter-cap">Израсходовано ${Math.round(pct)}%</p>
+    <div class="left ${c.left < 0 ? "over" : ""}"><span>${c.left < 0 ? "Перерасход" : "Остаток"}</span><strong>${money(Math.abs(c.left))}</strong></div>
+    <div class="meter ${c.left < 0 ? "over" : ""}" role="img" aria-label="Израсходовано ${Math.round(pct)}%"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i></div>
+    <p class="meter-cap">Израсходовано ${Math.round(pct)}% · ${c.left < 0 ? "следующий месяц начнётся снова с " + money(MONTHLY) : "остаток перейдёт на следующий месяц"}</p>
     <div class="rule"></div>
     <dl class="lines">
-      <div><dt>Дней с начала</dt><dd>${days}</dd></div>
-      <div><dt>В среднем за день</dt><dd>${money(avg)}</dd></div>
-      <div><dt>Чеков в бюджете</dt><dd>${st.rs.length}</dd></div>
+      <div><dt>Дней до конца месяца</dt><dd>${daysLeft}</dd></div>
+      <div><dt>Можно тратить в день</dt><dd>${money(perDay)}</dd></div>
+      <div><dt>В среднем тратили в день</dt><dd>${money(avg)}</dd></div>
+      <div><dt>Чеков за месяц</dt><dd>${c.rs.length}</dd></div>
     </dl>
-    ${forecast ? `<p class="forecast">${esc(forecast)}</p>` : ""}`;
+    ${past.length ? `<div class="rule"></div>
+    <span class="eyebrow">Прошлые месяцы</span>
+    <dl class="lines">${past.map(p => `<div><dt>${periodLabel(p)}</dt><dd class="${p.left < 0 ? "neg" : "pos"}">${signed(p.left)}</dd></div>`).join("")}</dl>` : ""}`;
 }
+
+function periodLabel(p) {
+  const end = parseD(p.to); end.setDate(end.getDate() - 1);
+  const f = d => d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+  return `${f(parseD(p.from))} – ${f(end)}`;
+}
+const signed = v => (v > 0 ? "+" : v < 0 ? "−" : "") + money(Math.abs(v));
 
 function budgetForm(b) {
   return `
-    <div class="slip-head"><span class="eyebrow">${b ? "Изменить бюджет" : "Начните с бюджета"}</span></div>
+    <div class="slip-head"><span class="eyebrow">${b ? "Дата начала" : "Начните с бюджета"}</span></div>
     <form id="budgetForm" class="bform">
-      <label for="bDate">Дата старта<input type="date" id="bDate" required value="${esc(b?.startDate || today())}"></label>
-      <label for="bAmt">Сумма на старте, ₴<input id="bAmt" inputmode="decimal" required placeholder="20 000" value="${b ? esc(toIn(b.startAmount)) : ""}"></label>
+      <p class="hint">Каждый месяц: ${money(MONTHLY)}. Месяц считается от даты начала. Остаток в конце месяца прибавляется к следующему, а после перерасхода следующий месяц начинается снова с ${money(MONTHLY)}.</p>
+      <label for="bDate">Дата начала<input type="date" id="bDate" required value="${esc(b?.startDate || today())}"></label>
       <div class="row">
         <button class="btn primary" type="submit">Сохранить</button>
         ${b ? '<button class="btn ghost" type="button" data-act="cancel-budget">Отмена</button>' : ""}
@@ -475,6 +521,7 @@ document.addEventListener("click", async e => {
     case "edit-budget": S.editBudget = true; $("budgetCard").innerHTML = ""; render(); break;
     case "cancel-budget": S.editBudget = false; $("budgetCard").innerHTML = ""; render(); break;
     case "reload": connect(); break;
+    case "scope": S.scope = t.dataset.scope === "all" ? "all" : "month"; lsSet("scope", S.scope); render(); break;
     case "toggle": S.open = S.open === id ? null : id; S.confirmDel = null; renderList(); break;
     case "edit": {
       const r = S.data.receipts.find(x => x.id === id); if (!r) return;
@@ -549,15 +596,14 @@ document.addEventListener("keydown", e => {
 document.addEventListener("submit", async e => {
   e.preventDefault();
   if (e.target.id === "budgetForm") {
-    const amt = r2(num($("bAmt").value));
     const date = $("bDate").value;
-    if (!isoD(date) || !(amt > 0)) { toast("Укажите дату и сумму больше нуля"); return; }
+    if (!isoD(date)) { toast("Укажите дату начала"); return; }
     const btn = e.target.querySelector("[type=submit]"); btn.disabled = true;
     try {
       S.editBudget = false;
-      await save(data => { data.budget = { startDate: date, startAmount: amt }; }, `Бюджет: ${amt} ₴ с ${date}`);
+      await save(data => { data.budget = { startDate: date }; }, `Бюджет: ${MONTHLY} ₴ в месяц с ${date}`);
       $("budgetCard").innerHTML = ""; render();
-      toast("Бюджет сохранён");
+      toast("Дата начала сохранена");
     } catch (err) { S.editBudget = !!S.data.budget; toast(ghErr(err)); btn.disabled = false; }
   }
   if (e.target.id === "setForm") {
@@ -590,4 +636,5 @@ $("setBtn").onclick = () => openSheet("settings");
 
 /* ---------- boot ---------- */
 S.settings = { ...S.settings, ...lsGet("settings", {}) };
+S.scope = lsGet("scope", "month") === "all" ? "all" : "month";
 connect();
