@@ -139,13 +139,27 @@ function periods() {
   return out;
 }
 
+/* The month on screen: S.view is a month index, null means the current month. */
+function selected(ps) {
+  if (!ps.length) return null;
+  const i = S.view == null ? ps.length - 1 : Math.max(0, Math.min(ps.length - 1, S.view));
+  return ps[i];
+}
+const lastDay = p => { const d = parseD(p.to); d.setDate(d.getDate() - 1); return d.toLocaleDateString("sv-SE"); };
+/* Date for a new receipt: today, or the last day of the past month being viewed. */
+function defaultDate() {
+  const ps = periods(), sel = selected(ps);
+  return sel && sel !== ps[ps.length - 1] ? lastDay(sel) : today();
+}
+
 function stats() {
   const ps = periods();
   const cur = ps[ps.length - 1] || null;
+  const sel = selected(ps);
   const start = S.data.budget?.startDate;
-  const rs = S.scope === "all" || !cur
+  const rs = S.scope === "all" || !sel
     ? S.data.receipts.filter(r => isDone(r) && (!start || (r.date || "") >= start))
-    : cur.rs;
+    : sel.rs;
   const cat = new Map(), typ = new Map();
   const add = (m, k, v) => m.set(k, (m.get(k) || 0) + v);
   for (const r of rs) {
@@ -167,7 +181,7 @@ function stats() {
     const rest = types.slice(13).reduce((s, e) => s + e[1], 0);
     types = [...types.slice(0, 13), ["Остальное", rest]];
   }
-  return { ps, cur, cat: sorted(cat), typ: types };
+  return { ps, cur, sel, isCurrent: sel === cur, cat: sorted(cat), typ: types };
 }
 
 /* ---------- render ---------- */
@@ -201,21 +215,32 @@ function renderBudget(st) {
     if (!$("budgetForm")) el.innerHTML = budgetForm(b);
     return;
   }
-  const c = st.cur;
+  const c = st.sel;
   if (!c) {
     el.innerHTML = `<div class="slip-head"><span class="eyebrow">Бюджет</span><button class="link" data-act="edit-budget" type="button">Изменить</button></div>
       <p class="hint">Бюджет начнётся ${fmtD(b.startDate)}. Каждый месяц: ${money(MONTHLY)}.</p>`;
     return;
   }
+  const live = st.isCurrent;
   const pct = c.budget > 0 ? c.spent / c.budget * 100 : 100;
-  const daysIn = Math.round((parseD(today()) - parseD(c.from)) / 864e5) + 1;
+  const daysIn = live ? Math.round((parseD(today()) - parseD(c.from)) / 864e5) + 1 : Math.round((parseD(c.to) - parseD(c.from)) / 864e5);
   const daysLeft = Math.max(1, Math.round((parseD(c.to) - parseD(today())) / 864e5));
   const avg = c.spent / Math.max(1, daysIn);
   const perDay = c.left > 0 ? c.left / daysLeft : 0;
   const past = st.ps.slice(0, -1).reverse();
+  const cap = live
+    ? (c.left < 0 ? "следующий месяц начнётся снова с " + money(MONTHLY) : "остаток перейдёт на следующий месяц")
+    : (c.left > 0 ? `месяц закрыт, ${money(c.left)} перешло на следующий` : c.left < 0 ? "месяц закрыт, перерасход не переносится" : "месяц закрыт");
   el.innerHTML = `
-    <div class="slip-head"><span class="eyebrow">Месяц ${c.k + 1}</span><button class="link" data-act="edit-budget" type="button">Дата начала</button></div>
-    <p class="period">${periodLabel(c)}</p>
+    <div class="slip-head">
+      <span class="mnav">
+        <button class="navbtn" type="button" data-act="month-prev" aria-label="Предыдущий месяц" ${c.k === 0 ? "disabled" : ""}>‹</button>
+        <span class="eyebrow">Месяц ${c.k + 1}</span>
+        <button class="navbtn" type="button" data-act="month-next" aria-label="Следующий месяц" ${live ? "disabled" : ""}>›</button>
+      </span>
+      <button class="link" data-act="edit-budget" type="button">Дата начала</button>
+    </div>
+    <p class="period">${periodLabel(c)}${live ? "" : ' <span class="tag">прошлый</span>'}</p>
     <dl class="lines">
       <div><dt>Бюджет на месяц</dt><dd>${money(MONTHLY)}</dd></div>
       ${c.carry > 0 ? `<div><dt>Перенос с прошлого</dt><dd class="pos">${signed(c.carry)}</dd></div>
@@ -223,19 +248,22 @@ function renderBudget(st) {
       <div><dt>Потрачено</dt><dd>${money(c.spent)}</dd></div>
     </dl>
     <div class="rule"></div>
-    <div class="left ${c.left < 0 ? "over" : ""}"><span>${c.left < 0 ? "Перерасход" : "Остаток"}</span><strong>${money(Math.abs(c.left))}</strong></div>
+    <div class="left ${c.left < 0 ? "over" : ""}"><span>${c.left < 0 ? "Перерасход" : live ? "Остаток" : "Сэкономлено"}</span><strong>${money(Math.abs(c.left))}</strong></div>
     <div class="meter ${c.left < 0 ? "over" : ""}" role="img" aria-label="Израсходовано ${Math.round(pct)}%"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i></div>
-    <p class="meter-cap">Израсходовано ${Math.round(pct)}% · ${c.left < 0 ? "следующий месяц начнётся снова с " + money(MONTHLY) : "остаток перейдёт на следующий месяц"}</p>
+    <p class="meter-cap">Израсходовано ${Math.round(pct)}% · ${cap}</p>
     <div class="rule"></div>
     <dl class="lines">
-      <div><dt>Дней до конца месяца</dt><dd>${daysLeft}</dd></div>
-      <div><dt>Можно тратить в день</dt><dd>${money(perDay)}</dd></div>
+      ${live ? `<div><dt>Дней до конца месяца</dt><dd>${daysLeft}</dd></div>
+      <div><dt>Можно тратить в день</dt><dd>${money(perDay)}</dd></div>` : ""}
       <div><dt>В среднем тратили в день</dt><dd>${money(avg)}</dd></div>
       <div><dt>Чеков за месяц</dt><dd>${c.rs.length}</dd></div>
     </dl>
+    ${live ? "" : `<p class="hint">Новые чеки сейчас добавляются в этот месяц.</p>
+    <div><button class="btn small" type="button" data-act="month-now">К текущему месяцу</button></div>`}
     ${past.length ? `<div class="rule"></div>
     <span class="eyebrow">Прошлые месяцы</span>
-    <dl class="lines">${past.map(p => `<div><dt>${periodLabel(p)}</dt><dd class="${p.left < 0 ? "neg" : "pos"}">${signed(p.left)}</dd></div>`).join("")}</dl>` : ""}`;
+    <div class="months">${past.map(p => `<button type="button" class="mrow ${p === c ? "on" : ""}" data-act="month-go" data-k="${p.k}">
+      <span>${periodLabel(p)}</span><span class="${p.left < 0 ? "neg" : "pos"}">${signed(p.left)}</span></button>`).join("")}</div>` : ""}`;
 }
 
 function periodLabel(p) {
@@ -271,9 +299,17 @@ function bars(entries) {
 
 function renderList() {
   const el = $("list");
-  const list = receipts();
+  const sel = selected(periods());
+  const byMonth = S.scope !== "all" && sel;
+  const all = receipts();
+  /* Receipts still waiting or failed are shown in every month so they are not lost from sight. */
+  const list = byMonth ? all.filter(r => !isDone(r) || ((r.date || "") >= sel.from && (r.date || "") < sel.to)) : all;
   const waiting = list.filter(r => r.status === "pending").length;
-  $("rcount").textContent = list.length ? `${list.length} шт.${waiting ? ` · ждут распознавания: ${waiting}` : ""}` : "";
+  $("rcount").textContent = (byMonth ? periodLabel(sel) + " · " : "") + `${list.length} шт.${waiting ? ` · ждут распознавания: ${waiting}` : ""}`;
+  if (S.state === "ready" && all.length && !list.length) {
+    el.innerHTML = `<p class="empty">В этом месяце чеков нет. Добавьте чек: он попадёт в этот месяц.</p>`;
+    return;
+  }
   if (S.state !== "ready") { el.innerHTML = `<p class="empty">${S.state === "loading" ? "Загружаю чеки…" : "Чеки появятся после подключения хранилища."}</p>`; return; }
   if (!list.length) {
     el.innerHTML = `<div class="empty-state">
@@ -456,7 +492,7 @@ async function onFiles(e) {
   if (list.length > MAX_IMAGES) toast(`Взяты первые ${MAX_IMAGES} фото`);
   S.busy = true; render();
   notice("Отправляю фото чека…");
-  const id = uid(), paths = [];
+  const id = uid(), paths = [], pendingDate = defaultDate();
   try {
     const files = await Promise.all(list.slice(0, MAX_IMAGES).map(shrink));
     for (let i = 0; i < files.length; i++) {
@@ -466,11 +502,11 @@ async function onFiles(e) {
     }
     const now = new Date().toISOString();
     await save(d => {
-      d.receipts.push({ id, status: "pending", date: today(), store: "", total: 0, items: [], photos: paths, createdAt: now, updatedAt: now });
+      d.receipts.push({ id, status: "pending", date: pendingDate, store: "", total: 0, items: [], photos: paths, createdAt: now, updatedAt: now });
     }, "Новый чек в очереди");
     S.open = id;
     notice("");
-    toast("Чек в очереди на распознавание");
+    toast(pendingDate === today() ? "Чек в очереди на распознавание" : `Чек в очереди, дата ${fmtD(pendingDate)}. Если на чеке другая дата, Claude поставит её`);
   } catch (err) {
     for (const p of paths) S.conn.deleteFile(p).catch(() => {});
     notice(ghErr(err));
@@ -521,6 +557,16 @@ document.addEventListener("click", async e => {
     case "edit-budget": S.editBudget = true; $("budgetCard").innerHTML = ""; render(); break;
     case "cancel-budget": S.editBudget = false; $("budgetCard").innerHTML = ""; render(); break;
     case "reload": connect(); break;
+    case "month-prev": case "month-next": case "month-go": case "month-now": {
+      const ps = periods(), sel = selected(ps);
+      if (!sel) break;
+      let k = act === "month-prev" ? sel.k - 1 : act === "month-next" ? sel.k + 1 : act === "month-go" ? +t.dataset.k : ps.length - 1;
+      k = Math.max(0, Math.min(ps.length - 1, k));
+      S.view = k === ps.length - 1 ? null : k;
+      S.open = null; S.confirmDel = null;
+      render();
+      break;
+    }
     case "scope": S.scope = t.dataset.scope === "all" ? "all" : "month"; lsSet("scope", S.scope); render(); break;
     case "toggle": S.open = S.open === id ? null : id; S.confirmDel = null; renderList(); break;
     case "edit": {
@@ -631,7 +677,7 @@ $("camBtn").onclick = $("fab").onclick = () => $("camIn").click();
 $("galBtn").onclick = () => $("galIn").click();
 $("camIn").onchange = onFiles;
 $("galIn").onchange = onFiles;
-$("manualBtn").onclick = () => openDraft({ id: uid(), store: "", date: today(), total: "", items: [blankItem()], photos: [], isNew: true });
+$("manualBtn").onclick = () => openDraft({ id: uid(), store: "", date: defaultDate(), total: "", items: [blankItem()], photos: [], isNew: true });
 $("setBtn").onclick = () => openSheet("settings");
 
 /* ---------- boot ---------- */
