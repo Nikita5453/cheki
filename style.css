@@ -200,8 +200,9 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
 .scope button { font: 500 13px var(--f-body); color: var(--muted); background: none; border: 0; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
 .scope button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .mnav { display: inline-flex; align-items: center; gap: 6px; }
-.navbtn { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: 600 18px/1 var(--f-body); cursor: pointer; }
-.navbtn:disabled { opacity: .35; cursor: default; }
+.navbtn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font: 600 20px/1 var(--f-body); cursor: pointer; }
+.navbtn:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
+.navbtn:disabled { border-color: var(--line); background: transparent; color: var(--muted); opacity: .6; cursor: default; }
 .months { display: flex; flex-direction: column; gap: 2px; font-family: var(--f-mono); }
 .mrow { display: flex; justify-content: space-between; gap: 8px; background: none; border: 0; border-radius: 6px; padding: 5px 6px; margin: 0 -6px; color: var(--ink); font: inherit; cursor: pointer; text-align: left; }
 .mrow:hover, .mrow.on { background: var(--bg); }
