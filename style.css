@@ -220,9 +220,13 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
 .otherbox { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px dashed var(--accent); border-radius: 10px; }
 .chip[hidden] { display: none; }
 .picks { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--line); padding-top: 12px; }
-.prow { display: grid; grid-template-columns: minmax(0, 1fr) 120px 32px; gap: 8px; align-items: center; }
+.prow { display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) 120px 32px; gap: 8px; align-items: center; }
 .prow span { overflow-wrap: anywhere; }
 .prow input { padding: 8px 10px; }
+@media (max-width: 720px) {
+  .prow { grid-template-columns: minmax(0, 1fr) 110px 32px; grid-template-areas: "type price del" "note note note"; padding-bottom: 8px; border-bottom: 1px dotted var(--line); }
+  .prow .p-type { grid-area: type; } .prow .p-note { grid-area: note; } .prow .i-price { grid-area: price; } .prow .i-del { grid-area: del; }
+}
 .mnav { display: inline-flex; align-items: center; gap: 6px; }
 .navbtn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font: 600 20px/1 var(--f-body); cursor: pointer; }
 .navbtn:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }

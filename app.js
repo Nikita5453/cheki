@@ -474,7 +474,13 @@ function addPersonal() {
 }
 
 function simpleDraft(base, items) {
-  return { ...base, simple: true, picks: (items || []).map(i => ({ type: i.type || i.name, category: i.category, price: toIn(i.price) })) };
+  return {
+    ...base, simple: true,
+    picks: (items || []).map(i => ({
+      type: i.type || i.name, category: i.category, price: toIn(i.price),
+      note: i.name && i.name !== (i.type || i.name) ? i.name : ""
+    }))
+  };
 }
 
 function renderSimple() {
@@ -506,7 +512,8 @@ function renderSimple() {
     <div class="picks">
       <span class="eyebrow">Сколько потратили</span>
       ${d.picks.length ? d.picks.map((p, i) => `<div class="prow">
-        <span>${esc(p.type)}</span>
+        <span class="p-type">${esc(p.type)}</span>
+        <input class="p-note" data-n="${i}" value="${esc(p.note || "")}" placeholder="Что именно купили (необязательно)" autocomplete="off" aria-label="Что именно купили: ${esc(p.type)}">
         <input class="i-price" data-p="${i}" inputmode="decimal" value="${esc(p.price)}" placeholder="0,00" aria-label="Сумма: ${esc(p.type)}">
         <button class="i-del" type="button" data-act="unpick" data-i="${i}" aria-label="Убрать: ${esc(p.type)}">×</button>
       </div>`).join("") : '<p class="hint">Отметьте выше, что купили. Можно выбрать несколько.</p>'}
@@ -529,7 +536,7 @@ function updatePickSum() {
 async function saveSimple() {
   const d = S.draft;
   const items = d.picks.filter(p => num(p.price))
-    .map(p => ({ name: p.type, price: r2(num(p.price)), category: EXP.includes(p.category) ? p.category : "Другое", type: p.type }));
+    .map(p => ({ name: String(p.note || "").trim() || p.type, price: r2(num(p.price)), category: EXP.includes(p.category) ? p.category : "Другое", type: p.type }));
   if (!items.length) { d.msg = "Отметьте, что купили, и впишите сумму."; renderSimple(); return; }
   const btn = $("saveBtn"); btn.disabled = true; btn.textContent = "Сохраняю…";
   const now = new Date().toISOString();
@@ -823,6 +830,7 @@ $("sheet").addEventListener("input", e => {
   const d = S.draft; if (!d || S.sheet !== "receipt") return;
   const t = e.target;
   if (t.dataset.p != null) { d.picks[+t.dataset.p].price = t.value; updatePickSum(); return; }
+  if (t.dataset.n != null) { d.picks[+t.dataset.n].note = t.value; return; }
   if (t.id === "otherIn") { d.otherText = t.value; filterPersonal(); return; }
   if (t.dataset.f) { const i = +t.closest(".irow").dataset.i; d.items[i][t.dataset.f] = t.value; }
   else if (t.id === "dStore") d.store = t.value;
