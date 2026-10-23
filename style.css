@@ -199,6 +199,17 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
 .scope { grid-column: 1 / -1; display: inline-flex; justify-self: start; background: var(--paper); border-radius: 10px; padding: 3px; gap: 2px; box-shadow: var(--shadow); }
 .scope button { font: 500 13px var(--f-body); color: var(--muted); background: none; border: 0; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
 .scope button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.wallets { display: flex; gap: 4px; align-self: flex-start; background: var(--paper); border-radius: 12px; padding: 4px; box-shadow: var(--shadow); }
+.wallets button { font: 600 15px var(--f-body); color: var(--muted); background: none; border: 0; border-radius: 9px; padding: 10px 22px; cursor: pointer; }
+.wallets button:hover { color: var(--ink); }
+.wallets button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.left.plain strong { color: var(--ink); }
+.moveto { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip.small { padding: 5px 11px; font-size: 13px; }
+@media (max-width: 720px) {
+  .wallets { align-self: stretch; }
+  .wallets button { flex: 1; padding: 10px 8px; }
+}
 .date-only { max-width: 220px; }
 .picker { display: flex; flex-direction: column; gap: 12px; }
 .pgroup { display: flex; flex-direction: column; gap: 6px; }

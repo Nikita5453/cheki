@@ -7,6 +7,16 @@ const FOOD = ["Молочное", "Яйца", "Мясо и птица", "Рыб�
   "Алкоголь", "Готовая еда", "Замороженное"];
 const CUR = "₴";
 const MONTHLY = 6200;
+/* Separate wallets. Only the shared one has a monthly budget; the personal ones just track spending.
+   Receipts saved before wallets existed have no `wallet` field and belong to the shared one. */
+const WALLETS = [
+  { id: "common", name: "Общие", budget: MONTHLY },
+  { id: "nikita", name: "Никита", budget: null },
+  { id: "lyuda", name: "Люда", budget: null }
+];
+const walletOf = r => WALLETS.some(w => w.id === r.wallet) ? r.wallet : "common";
+const curWallet = () => WALLETS.find(w => w.id === S.wallet) || WALLETS[0];
+const mine = r => walletOf(r) === curWallet().id;
 const DEFAULT_REPO = "Nikita5453/cheki-data";
 const NO_SPLIT = "Без разбивки";
 const MAX_IMAGES = 4;
@@ -120,21 +130,22 @@ function addMonths(iso, k) {
   return t.toLocaleDateString("sv-SE");
 }
 
-/* Budget months from the start date up to today. Each gets MONTHLY plus what the previous month saved;
-   overspending is not carried, the next month starts from MONTHLY again. */
+/* Months of the selected wallet from the start date up to today. With a budget, each month gets it plus what the
+   previous month saved; overspending is not carried. Without a budget, budget and left stay null. */
 function periods() {
   const start = S.data.budget?.startDate;
   if (!isoD(start)) return [];
+  const base = curWallet().budget;
   const now = today(), out = [];
   let carry = 0;
   for (let k = 0; k < 1200; k++) {
     const from = addMonths(start, k), to = addMonths(start, k + 1);
     if (from > now) break;
-    const rs = S.data.receipts.filter(r => isDone(r) && (r.date || "") >= from && (r.date || "") < to);
+    const rs = S.data.receipts.filter(r => mine(r) && isDone(r) && (r.date || "") >= from && (r.date || "") < to);
     const spent = r2(rs.reduce((s, r) => s + (+r.total || 0), 0));
-    const budget = r2(MONTHLY + carry);
-    out.push({ k, from, to, carry: r2(carry), budget, spent, left: r2(budget - spent), rs });
-    carry = Math.max(0, budget - spent);
+    const budget = base == null ? null : r2(base + carry);
+    out.push({ k, from, to, carry: r2(carry), budget, spent, left: budget == null ? null : r2(budget - spent), rs });
+    carry = budget == null ? 0 : Math.max(0, budget - spent);
   }
   return out;
 }
@@ -158,7 +169,7 @@ function stats() {
   const sel = selected(ps);
   const start = S.data.budget?.startDate;
   const rs = S.scope === "all" || !sel
-    ? S.data.receipts.filter(r => isDone(r) && (!start || (r.date || "") >= start))
+    ? S.data.receipts.filter(r => mine(r) && isDone(r) && (!start || (r.date || "") >= start))
     : sel.rs;
   const cat = new Map(), typ = new Map();
   const add = (m, k, v) => m.set(k, (m.get(k) || 0) + v);
@@ -192,6 +203,7 @@ function render() {
   $("byType").innerHTML = bars(st.typ);
   renderList();
   document.querySelectorAll("[data-scope]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.scope === S.scope)));
+  document.querySelectorAll("#wallets [data-w]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.w === curWallet().id)));
   const ok = S.state === "ready" && !S.busy;
   for (const id of ["camBtn", "galBtn", "manualBtn", "fab"]) $(id).disabled = !ok;
   schedulePoll();
@@ -222,16 +234,10 @@ function renderBudget(st) {
     return;
   }
   const live = st.isCurrent;
-  const pct = c.budget > 0 ? c.spent / c.budget * 100 : 100;
   const daysIn = live ? Math.round((parseD(today()) - parseD(c.from)) / 864e5) + 1 : Math.round((parseD(c.to) - parseD(c.from)) / 864e5);
-  const daysLeft = Math.max(1, Math.round((parseD(c.to) - parseD(today())) / 864e5));
   const avg = c.spent / Math.max(1, daysIn);
-  const perDay = c.left > 0 ? c.left / daysLeft : 0;
   const past = st.ps.slice(0, -1).reverse();
-  const cap = live
-    ? (c.left < 0 ? "следующий месяц начнётся снова с " + money(MONTHLY) : "остаток перейдёт на следующий месяц")
-    : (c.left > 0 ? `месяц закрыт, ${money(c.left)} перешло на следующий` : c.left < 0 ? "месяц закрыт, перерасход не переносится" : "месяц закрыт");
-  el.innerHTML = `
+  const head = `
     <div class="slip-head">
       <span class="mnav">
         <button class="navbtn" type="button" data-act="month-prev" aria-label="Предыдущий месяц" ${c.k === 0 ? "disabled" : ""}>‹</button>
@@ -240,7 +246,33 @@ function renderBudget(st) {
       </span>
       <button class="link" data-act="edit-budget" type="button">Дата начала</button>
     </div>
-    <p class="period">${periodLabel(c)}${live ? "" : ' <span class="tag">прошлый</span>'}</p>
+    <p class="period">${periodLabel(c)}${live ? "" : ' <span class="tag">прошлый</span>'}</p>`;
+  const back = live ? "" : `<p class="hint">Новые чеки сейчас добавляются в этот месяц.</p>
+    <div><button class="btn small" type="button" data-act="month-now">К текущему месяцу</button></div>`;
+
+  if (c.budget == null) {
+    el.innerHTML = `${head}
+      <div class="left plain"><span>Потрачено за месяц</span><strong>${money(c.spent)}</strong></div>
+      <div class="rule"></div>
+      <dl class="lines">
+        <div><dt>В среднем тратили в день</dt><dd>${money(avg)}</dd></div>
+        <div><dt>Чеков за месяц</dt><dd>${c.rs.length}</dd></div>
+      </dl>
+      ${back}
+      ${past.length ? `<div class="rule"></div>
+      <span class="eyebrow">Прошлые месяцы</span>
+      <div class="months">${past.map(p => `<button type="button" class="mrow ${p === c ? "on" : ""}" data-act="month-go" data-k="${p.k}">
+        <span>${periodLabel(p)}</span><span>${money(p.spent)}</span></button>`).join("")}</div>` : ""}`;
+    return;
+  }
+
+  const pct = c.budget > 0 ? c.spent / c.budget * 100 : 100;
+  const daysLeft = Math.max(1, Math.round((parseD(c.to) - parseD(today())) / 864e5));
+  const perDay = c.left > 0 ? c.left / daysLeft : 0;
+  const cap = live
+    ? (c.left < 0 ? "следующий месяц начнётся снова с " + money(MONTHLY) : "остаток перейдёт на следующий месяц")
+    : (c.left > 0 ? `месяц закрыт, ${money(c.left)} перешло на следующий` : c.left < 0 ? "месяц закрыт, перерасход не переносится" : "месяц закрыт");
+  el.innerHTML = `${head}
     <dl class="lines">
       <div><dt>Бюджет на месяц</dt><dd>${money(MONTHLY)}</dd></div>
       ${c.carry > 0 ? `<div><dt>Перенос с прошлого</dt><dd class="pos">${signed(c.carry)}</dd></div>
@@ -258,8 +290,7 @@ function renderBudget(st) {
       <div><dt>В среднем тратили в день</dt><dd>${money(avg)}</dd></div>
       <div><dt>Чеков за месяц</dt><dd>${c.rs.length}</dd></div>
     </dl>
-    ${live ? "" : `<p class="hint">Новые чеки сейчас добавляются в этот месяц.</p>
-    <div><button class="btn small" type="button" data-act="month-now">К текущему месяцу</button></div>`}
+    ${back}
     ${past.length ? `<div class="rule"></div>
     <span class="eyebrow">Прошлые месяцы</span>
     <div class="months">${past.map(p => `<button type="button" class="mrow ${p === c ? "on" : ""}" data-act="month-go" data-k="${p.k}">
@@ -301,7 +332,7 @@ function renderList() {
   const el = $("list");
   const sel = selected(periods());
   const byMonth = S.scope !== "all" && sel;
-  const all = receipts();
+  const all = receipts().filter(mine);
   /* Receipts still waiting or failed are shown in every month so they are not lost from sight. */
   const list = byMonth ? all.filter(r => !isDone(r) || ((r.date || "") >= sel.from && (r.date || "") < sel.to)) : all;
   const waiting = list.filter(r => r.status === "pending").length;
@@ -347,9 +378,12 @@ function detail(r) {
   const delBtns = `
       <button class="btn small danger ${sure ? "sure" : ""}" type="button" data-act="${sure ? "del-yes" : "del"}" data-id="${esc(r.id)}">${sure ? "Да, удалить чек" : "Удалить"}</button>
       ${sure ? `<button class="btn small ghost" type="button" data-act="del-no">Отмена</button>` : ""}`;
+  const move = `<div class="moveto"><span class="hint">Чей чек:</span>${WALLETS.map(w =>
+    `<button type="button" class="chip small" data-act="move" data-id="${esc(r.id)}" data-w="${w.id}" aria-pressed="${walletOf(r) === w.id}">${w.name}</button>`).join("")}</div>`;
   if (r.status === "pending" || r.status === "error") {
     return `<div class="rc-detail">
       ${photos}
+      ${move}
       <p class="hint">${r.status === "pending"
         ? "Чек распознается, когда на компьютере запущено «Распознавание чеков». Можно не ждать и заполнить его вручную."
         : "Claude не смог прочитать этот чек: " + esc(r.error || "причина неизвестна") + ". Попробуйте ещё раз или заполните вручную."}</p>
@@ -373,6 +407,7 @@ function detail(r) {
         <tr><td colspan="3"><strong>Итого</strong></td><td class="num"><strong>${money(r.total)}</strong></td></tr>
       </tbody>
     </table></div>
+    ${move}
     <div class="row">
       <button class="btn small" type="button" data-act="edit" data-id="${esc(r.id)}">Изменить</button>
       ${delBtns}
@@ -461,7 +496,7 @@ async function saveSimple() {
   const btn = $("saveBtn"); btn.disabled = true; btn.textContent = "Сохраняю…";
   const now = new Date().toISOString();
   const rec = {
-    id: d.id, status: "done", manual: true, store: "", date: isoD(d.date) ? d.date : today(),
+    id: d.id, status: "done", manual: true, wallet: d.wallet || curWallet().id, store: "", date: isoD(d.date) ? d.date : today(),
     total: r2(items.reduce((s, i) => s + i.price, 0)), items, photos: d.photos || [], createdAt: d.createdAt || now, updatedAt: now
   };
   try {
@@ -590,11 +625,12 @@ async function onFiles(e) {
     }
     const now = new Date().toISOString();
     await save(d => {
-      d.receipts.push({ id, status: "pending", date: pendingDate, store: "", total: 0, items: [], photos: paths, createdAt: now, updatedAt: now });
+      d.receipts.push({ id, status: "pending", wallet: curWallet().id, date: pendingDate, store: "", total: 0, items: [], photos: paths, createdAt: now, updatedAt: now });
     }, "Новый чек в очереди");
     S.open = id;
     notice("");
-    toast(pendingDate === today() ? "Чек в очереди на распознавание" : `Чек в очереди, дата ${fmtD(pendingDate)}. Если на чеке другая дата, Claude поставит её`);
+    toast((pendingDate === today() ? "Чек в очереди на распознавание" : `Чек в очереди, дата ${fmtD(pendingDate)}. Если на чеке другая дата, Claude поставит её`)
+      + ` · ${curWallet().name}`);
   } catch (err) {
     for (const p of paths) S.conn.deleteFile(p).catch(() => {});
     notice(ghErr(err));
@@ -619,7 +655,7 @@ async function saveDraft() {
   const btn = $("saveBtn"); btn.disabled = true; btn.textContent = "Сохраняю…";
   const now = new Date().toISOString();
   const rec = {
-    id: d.id, status: "done", store: String(d.store || "").trim(), date: isoD(d.date) ? d.date : today(), total, items,
+    id: d.id, status: "done", wallet: d.wallet || curWallet().id, store: String(d.store || "").trim(), date: isoD(d.date) ? d.date : today(), total, items,
     photos: d.photos || [], createdAt: d.createdAt || now, updatedAt: now
   };
   try {
@@ -657,17 +693,35 @@ document.addEventListener("click", async e => {
       break;
     }
     case "scope": S.scope = t.dataset.scope === "all" ? "all" : "month"; lsSet("scope", S.scope); render(); break;
+    case "wallet":
+      if (WALLETS.some(w => w.id === t.dataset.w) && t.dataset.w !== S.wallet) {
+        S.wallet = t.dataset.w; lsSet("wallet", S.wallet);
+        S.view = null; S.open = null; S.confirmDel = null;
+        render();
+      }
+      break;
+    case "move": {
+      const w = WALLETS.find(x => x.id === t.dataset.w);
+      const r = S.data.receipts.find(x => x.id === id);
+      if (!w || !r || walletOf(r) === w.id) break;
+      try {
+        await save(data => { const x = data.receipts.find(y => y.id === id); if (!x) return false; x.wallet = w.id; }, `Чек перенесён: ${w.name}`);
+        S.open = null; render();
+        toast(`Чек перенесён в «${w.name}»`);
+      } catch (err) { toast(ghErr(err)); }
+      break;
+    }
     case "toggle": S.open = S.open === id ? null : id; S.confirmDel = null; renderList(); break;
     case "edit": {
       const r = S.data.receipts.find(x => x.id === id); if (!r) return;
       /* Typed-in receipts and ones not yet recognized use the quick form; recognized ones keep the full editor. */
       if (r.manual || !isDone(r)) {
-        openDraft(simpleDraft({ id: r.id, date: r.date || defaultDate(), createdAt: r.createdAt, photos: [...(r.photos || [])], isNew: !isDone(r) }, r.items));
+        openDraft(simpleDraft({ id: r.id, wallet: walletOf(r), date: r.date || defaultDate(), createdAt: r.createdAt, photos: [...(r.photos || [])], isNew: !isDone(r) }, r.items));
         break;
       }
       const items = (r.items || []).map(i => ({ name: i.name, price: toIn(i.price), category: i.category, type: i.type || "" }));
       openDraft({
-        id: r.id, store: r.store || "", date: r.date || today(), total: isDone(r) ? toIn(r.total) : "", createdAt: r.createdAt,
+        id: r.id, wallet: walletOf(r), store: r.store || "", date: r.date || today(), total: isDone(r) ? toIn(r.total) : "", createdAt: r.createdAt,
         items: items.length ? items : [blankItem()], photos: [...(r.photos || [])], isNew: !isDone(r)
       });
       break;
@@ -785,4 +839,5 @@ $("setBtn").onclick = () => openSheet("settings");
 /* ---------- boot ---------- */
 S.settings = { ...S.settings, ...lsGet("settings", {}) };
 S.scope = lsGet("scope", "month") === "all" ? "all" : "month";
+S.wallet = WALLETS.some(w => w.id === lsGet("wallet", "")) ? lsGet("wallet", "") : "common";
 connect();
