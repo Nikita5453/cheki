@@ -1,7 +1,8 @@
 "use strict";
 
+const PERSONAL = "Личные";
 const EXP = ["Продукты", "Хозтовары и бытовая химия", "Кафе и доставка", "Аптека и здоровье", "Транспорт и топливо",
-  "Одежда и обувь", "Дом и ремонт", "Связь и подписки", "Дети", "Животные", "Красота и уход", "Развлечения", "Другое"];
+  "Одежда и обувь", "Дом и ремонт", "Связь и подписки", "Дети", "Животные", "Красота и уход", "Развлечения", PERSONAL, "Другое"];
 const FOOD = ["Молочное", "Яйца", "Мясо и птица", "Рыба и морепродукты", "Овощи", "Фрукты и ягоды", "Хлеб и выпечка",
   "Крупы, макароны, мука", "Бакалея и консервы", "Масло, соусы, специи", "Сладости и снеки", "Чай и кофе", "Напитки",
   "Алкоголь", "Готовая еда", "Замороженное"];
@@ -430,23 +431,46 @@ function closeSheet() {
 }
 
 /* ---------- quick manual entry: pick what was bought, type how much ---------- */
-const OTHER = EXP.filter(c => c !== "Продукты" && c !== "Другое");
+const OTHER = EXP.filter(c => c !== "Продукты" && c !== "Другое" && c !== PERSONAL);
 
-/* Choices: food types, other expense kinds, and any extra kinds already used in saved receipts. */
+/* Choices: food types, other expense kinds, kinds already used in saved receipts, and personal kinds the user typed
+   in through «Другое» (category «Личные»), which are remembered because they live in the saved receipts. */
 function pickGroups() {
-  const food = [...FOOD], other = OTHER.map(c => ({ type: c, category: c }));
+  const food = [...FOOD], other = OTHER.map(c => ({ type: c, category: c })), personal = [];
   const known = new Set([...FOOD, ...OTHER, "Другое"]);
-  for (const r of S.data.receipts) for (const it of r.items || []) {
+  const used = [...S.data.receipts.flatMap(r => r.items || []), ...(S.draft?.picks || [])];
+  for (const it of used) {
     const t = String(it.type || "").trim();
     if (!t || known.has(t)) continue;
     known.add(t);
-    if (it.category === "Продукты") food.push(t);
+    if (it.category === PERSONAL) personal.push(t);
+    else if (it.category === "Продукты") food.push(t);
     else other.push({ type: t, category: EXP.includes(it.category) ? it.category : "Другое" });
   }
-  return [
-    { title: "Продукты", opts: food.map(t => ({ type: t, category: "Продукты" })) },
-    { title: "Остальное", opts: [...other, { type: "Другое", category: "Другое" }] }
-  ];
+  return { food, other, personal: personal.sort((a, b) => a.localeCompare(b, "ru")) };
+}
+
+/* Hide personal kinds that do not match what is typed in the «Другое» field. */
+function filterPersonal() {
+  const q = (S.draft?.otherText || "").trim().toLowerCase();
+  const chips = [...document.querySelectorAll("#personalGroup .chip")];
+  chips.forEach(c => { c.hidden = !!q && !c.dataset.type.toLowerCase().includes(q); });
+  const none = $("personalNone");
+  if (none) none.hidden = !q || chips.some(c => !c.hidden);
+}
+
+function addPersonal() {
+  const d = S.draft;
+  let name = (d.otherText || "").trim().replace(/\s+/g, " ");
+  if (!name) { d.msg = "Впишите, что это, например «Подарок»."; renderSimple(); $("otherIn")?.focus(); return; }
+  name = name[0].toUpperCase() + name.slice(1);
+  const same = pickGroups().personal.find(t => t.toLowerCase() === name.toLowerCase());
+  if (same) name = same;
+  let i = d.picks.findIndex(p => p.type.toLowerCase() === name.toLowerCase());
+  if (i < 0) { d.picks.push({ type: name, category: PERSONAL, price: "" }); i = d.picks.length - 1; }
+  d.otherText = ""; d.otherOpen = false; d.msg = "";
+  renderSimple();
+  document.querySelector(`[data-p="${i}"]`)?.focus();
 }
 
 function simpleDraft(base, items) {
@@ -456,6 +480,8 @@ function simpleDraft(base, items) {
 function renderSimple() {
   const d = S.draft, el = $("sheet");
   const chosen = new Set(d.picks.map(p => p.type));
+  const g = pickGroups();
+  const chip = (type, cat) => `<button type="button" class="chip" data-act="pick" data-type="${esc(type)}" data-cat="${esc(cat)}" aria-pressed="${chosen.has(type)}">${esc(type)}</button>`;
   const thumbs = (d.photos || []).map(p => `<img data-photo="${esc(p)}" alt="Фото чека">`).join("");
   el.innerHTML = `
     <header class="sh-head"><h2>${d.isNew ? "Новый чек" : "Чек"}</h2><button class="x" type="button" data-act="close" aria-label="Закрыть">×</button></header>
@@ -463,8 +489,19 @@ function renderSimple() {
     ${thumbs ? `<div class="thumbs">${thumbs}</div>` : ""}
     <label for="dDate" class="date-only">Дата покупки<input type="date" id="dDate" value="${esc(d.date)}"></label>
     <div class="picker">
-      ${pickGroups().map(g => `<div class="pgroup"><span class="eyebrow">${g.title}</span><div class="chips">${g.opts.map(o =>
-        `<button type="button" class="chip" data-act="pick" data-type="${esc(o.type)}" data-cat="${esc(o.category)}" aria-pressed="${chosen.has(o.type)}">${esc(o.type)}</button>`).join("")}</div></div>`).join("")}
+      <div class="pgroup"><span class="eyebrow">Продукты</span><div class="chips">${g.food.map(t => chip(t, "Продукты")).join("")}</div></div>
+      <div class="pgroup"><span class="eyebrow">Остальное</span><div class="chips">${g.other.map(o => chip(o.type, o.category)).join("")}
+        <button type="button" class="chip" data-act="other-toggle" aria-expanded="${!!d.otherOpen}" aria-pressed="${!!d.otherOpen}">Другое…</button></div></div>
+      ${d.otherOpen ? `<div class="otherbox">
+        <div class="keyrow">
+          <input id="otherIn" value="${esc(d.otherText || "")}" placeholder="Что это? Например: подарок, стрижка" autocomplete="off" aria-label="Название личной траты">
+          <button class="btn small primary" type="button" data-act="other-add">Добавить</button>
+        </div>
+        <p class="hint">Попадёт в «Личные» и запомнится для следующих чеков.${g.personal.length ? " Пока пишете, ниже остаются только подходящие." : ""}</p>
+      </div>` : ""}
+      ${g.personal.length ? `<div class="pgroup" id="personalGroup"><span class="eyebrow">Личные</span>
+        <div class="chips">${g.personal.map(t => chip(t, PERSONAL)).join("")}</div>
+        <p class="hint" id="personalNone" hidden>Такого ещё нет. Нажмите «Добавить», и оно запомнится.</p></div>` : ""}
     </div>
     <div class="picks">
       <span class="eyebrow">Сколько потратили</span>
@@ -481,6 +518,7 @@ function renderSimple() {
     </div>`;
   fillPhotos(el);
   updatePickSum();
+  filterPersonal();
 }
 
 function updatePickSum() {
@@ -768,6 +806,12 @@ document.addEventListener("click", async e => {
       renderSimple();
       if (i < 0) document.querySelector(`[data-p="${d.picks.length - 1}"]`)?.focus();
     } break;
+    case "other-toggle": if (d?.simple) {
+      d.otherOpen = !d.otherOpen; d.msg = "";
+      renderSimple();
+      if (d.otherOpen) $("otherIn")?.focus();
+    } break;
+    case "other-add": if (d?.simple) addPersonal(); break;
     case "unpick": if (d?.simple) { d.picks.splice(+t.dataset.i, 1); renderSimple(); } break;
     case "add-row": if (d) { d.items.push(blankItem()); renderSheet(); $("irows").lastElementChild?.querySelector("input")?.focus(); } break;
     case "del-row": if (d) { d.items.splice(+t.dataset.i, 1); if (!d.items.length) d.items.push(blankItem()); renderSheet(); } break;
@@ -779,6 +823,7 @@ $("sheet").addEventListener("input", e => {
   const d = S.draft; if (!d || S.sheet !== "receipt") return;
   const t = e.target;
   if (t.dataset.p != null) { d.picks[+t.dataset.p].price = t.value; updatePickSum(); return; }
+  if (t.id === "otherIn") { d.otherText = t.value; filterPersonal(); return; }
   if (t.dataset.f) { const i = +t.closest(".irow").dataset.i; d.items[i][t.dataset.f] = t.value; }
   else if (t.id === "dStore") d.store = t.value;
   else if (t.id === "dDate") d.date = t.value;
@@ -790,6 +835,7 @@ $("sheet").addEventListener("change", e => {
   if (d && S.sheet === "receipt" && t.dataset.f === "category") d.items[+t.closest(".irow").dataset.i].category = t.value;
 });
 document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.id === "otherIn") { e.preventDefault(); addPersonal(); return; }
   if (e.key !== "Escape") return;
   const v = document.querySelector(".viewer"); if (v) { v.remove(); return; }
   if (S.sheet) closeSheet();

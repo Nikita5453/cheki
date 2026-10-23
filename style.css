@@ -217,6 +217,8 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
 .chip { font: 500 14px var(--f-body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 99px; padding: 8px 13px; cursor: pointer; }
 .chip:hover { border-color: var(--muted); }
 .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.otherbox { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px dashed var(--accent); border-radius: 10px; }
+.chip[hidden] { display: none; }
 .picks { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--line); padding-top: 12px; }
 .prow { display: grid; grid-template-columns: minmax(0, 1fr) 120px 32px; gap: 8px; align-items: center; }
 .prow span { overflow-wrap: anywhere; }
