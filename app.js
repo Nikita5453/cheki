@@ -370,7 +370,7 @@ function renderSettings() {
         <li>Откройте <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com → новый fine-grained токен</a>.</li>
         <li>Token name: <i>чеки</i>. Expiration: <i>No expiration</i> или год.</li>
         <li>Repository access: <i>Only select repositories</i> → <i>cheki-data</i>.</li>
-        <li>Permissions → Repository permissions → <i>Contents</i>: <i>Read and write</i>.</li>
+        <li>Permissions → <i>Add permissions</i> → отметьте <i>Contents</i> и выберите у него <i>Read and write</i>.</li>
         <li>Нажмите Generate token, скопируйте его и вставьте сюда.</li>
       </ol>
       <label for="sToken">Токен GitHub
