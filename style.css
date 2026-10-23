@@ -140,6 +140,10 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
 .rc-n { color: var(--muted); font-size: 13px; }
 .rc-total { font-weight: 600; text-align: right; white-space: nowrap; }
 .tag { font: 500 11px var(--f-body); color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 1px 7px; margin-left: 6px; white-space: nowrap; }
+.tag.wait { color: var(--accent); border-color: var(--accent); }
+.tag.err { color: var(--bad); border-color: var(--bad); }
+.steps { padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.hint a { color: var(--accent); }
 .rc-detail { padding: 4px 4px 16px; display: flex; flex-direction: column; gap: 12px; }
 .items { overflow-x: auto; }
 .items table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -192,6 +196,8 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
   background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 99px; padding: 15px 20px;
   font: 600 15px var(--f-body); box-shadow: var(--shadow); cursor: pointer;
 }
+.fab:disabled { opacity: .5; cursor: default; }
+.slip .hint { font-family: var(--f-body); font-size: 14px; }
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 30;
   bottom: calc(84px + env(safe-area-inset-bottom, 0px));

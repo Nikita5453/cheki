@@ -5,15 +5,15 @@ const EXP = ["Продукты", "Хозтовары и бытовая хими�
 const FOOD = ["Молочное и яйца", "Мясо и птица", "Рыба и морепродукты", "Овощи", "Фрукты и ягоды", "Хлеб и выпечка",
   "Крупы, макароны, мука", "Бакалея и консервы", "Масло, соусы, специи", "Сладости и снеки", "Чай и кофе", "Напитки",
   "Алкоголь", "Готовая еда", "Замороженное"];
-const CURS = ["₽", "֏", "$", "€", "₸", "₴", "Br", "₾", "сўм"];
-const MODELS = ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-5-mini"];
-const DEFAULT_MODEL = "gpt-4o-mini";
+const CUR = "₴";
+const DEFAULT_REPO = "Nikita5453/cheki-data";
 const NO_SPLIT = "Без разбивки";
 const MAX_IMAGES = 4;
 
 const S = {
-  budget: null, receipts: [], settings: { apiKey: "", model: DEFAULT_MODEL },
-  editBudget: false, open: null, confirmDel: null, draft: null, sheet: null, ctl: null, storeOk: true
+  data: { budget: null, receipts: [] }, conn: null, settings: { token: "", repo: DEFAULT_REPO },
+  state: "setup", // setup | loading | ready | error
+  editBudget: false, open: null, confirmDel: null, draft: null, sheet: null, busy: false
 };
 
 /* ---------- helpers ---------- */
@@ -21,88 +21,98 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const nf = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const r2 = n => Math.round((+n || 0) * 100) / 100;
-const cur = () => S.budget?.currency || "₽";
-const money = v => nf.format(r2(v)) + " " + cur();
+const money = v => nf.format(r2(v)) + " " + CUR;
 const num = v => { const n = parseFloat(String(v ?? "").replace(/[\s ]/g, "").replace(",", ".")); return isFinite(n) ? n : 0; };
 const toIn = n => (n === "" || n == null) ? "" : String(r2(n)).replace(".", ",");
 const today = () => new Date().toLocaleDateString("sv-SE");
 const parseD = s => { const [y, m, d] = String(s).split("-").map(Number); return new Date(y, (m || 1) - 1, d || 1); };
 const fmtD = s => s ? parseD(s).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" }) : "—";
 const isoD = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
-const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const blankItem = () => ({ name: "", price: "", category: "Продукты", type: "" });
+const isDone = r => !r.status || r.status === "done";
 
 let toastT;
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.hidden = false;
-  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 3000);
+  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 3200);
 }
 function notice(msg) { const n = $("notice"); n.textContent = msg || ""; n.hidden = !msg; }
 
-/* ---------- storage: localStorage for settings, IndexedDB for receipts and photos ---------- */
 function lsGet(k, fallback) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fallback; } catch { return fallback; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } }
 
-const DB = new Promise((res, rej) => {
+function ghErr(e) {
+  if (e?.status === 0) return "Нет связи с GitHub. Проверьте интернет.";
+  if (e?.status === 401) return "GitHub не принял токен. Проверьте его в настройках.";
+  if (e?.status === 403) return "У токена нет прав на запись. Нужен доступ Contents: Read and write.";
+  if (e?.status === 404) return "Репозиторий с данными не найден или токен не даёт к нему доступа.";
+  if (e?.status === 409) return "Данные одновременно изменились на другом устройстве. Попробуйте ещё раз.";
+  return "GitHub вернул ошибку: " + (e?.message || "неизвестно");
+}
+
+/* ---------- data ---------- */
+function receipts() {
+  return [...S.data.receipts].sort((a, b) =>
+    (b.date || "").localeCompare(a.date || "") || (b.createdAt || "").localeCompare(a.createdAt || ""));
+}
+
+async function refresh(quiet) {
+  if (!S.conn) return;
   try {
-    const r = indexedDB.open("cheki", 1);
-    r.onupgradeneeded = () => {
-      const d = r.result;
-      d.createObjectStore("receipts", { keyPath: "id" });
-      d.createObjectStore("photos", { keyPath: "id" });
-    };
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
-  } catch (e) { rej(e); }
-});
-DB.catch(() => {});
-
-function tx(stores, mode, fn) {
-  return DB.then(d => new Promise((res, rej) => {
-    const t = d.transaction(stores, mode);
-    const req = fn(t);
-    t.oncomplete = () => res(req && "result" in req ? req.result : undefined);
-    t.onerror = () => rej(t.error);
-    t.onabort = () => rej(t.error);
-  }));
-}
-const allReceipts = () => tx("receipts", "readonly", t => t.objectStore("receipts").getAll());
-const putReceipt = r => tx("receipts", "readwrite", t => t.objectStore("receipts").put(r));
-const putPhoto = (id, blob) => tx("photos", "readwrite", t => t.objectStore("photos").put({ id, blob }));
-const getPhoto = id => tx("photos", "readonly", t => t.objectStore("photos").get(id));
-function deleteReceipt(r) {
-  return tx(["receipts", "photos"], "readwrite", t => {
-    t.objectStore("receipts").delete(r.id);
-    for (const p of r.photos || []) t.objectStore("photos").delete(p);
-  });
+    const { data, changed } = await S.conn.load();
+    S.data = data;
+    if (S.state !== "ready") { S.state = "ready"; notice(""); }
+    if (changed || !quiet) render();
+  } catch (e) {
+    if (!quiet || S.state !== "ready") { S.state = "error"; notice(ghErr(e)); render(); }
+  }
 }
 
-async function reload() {
-  const list = await allReceipts();
-  list.sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || "").localeCompare(a.createdAt || ""));
-  S.receipts = list;
+async function save(fn, message) {
+  S.data = await S.conn.mutate(fn, message);
   render();
 }
 
+function connect() {
+  const { token, repo } = S.settings;
+  if (!token) { S.conn = null; S.state = "setup"; render(); return; }
+  S.conn = GH.connect({ token, repo: repo || DEFAULT_REPO });
+  S.state = "loading";
+  render();
+  refresh(false);
+}
+
+/* While a receipt waits for recognition, check often; otherwise rarely. 304 answers are free. */
+let pollT;
+function schedulePoll() {
+  clearTimeout(pollT);
+  const waiting = S.data.receipts.some(r => r.status === "pending");
+  pollT = setTimeout(async () => {
+    if (document.visibilityState === "visible" && !S.busy) await refresh(true);
+    schedulePoll();
+  }, waiting ? 15000 : 90000);
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(true); });
+
 const photoUrls = new Map();
-async function photoUrl(id) {
-  if (photoUrls.has(id)) return photoUrls.get(id);
-  const rec = await getPhoto(id).catch(() => null);
-  const url = rec?.blob ? URL.createObjectURL(rec.blob) : "";
-  photoUrls.set(id, url);
-  return url;
+async function photoUrl(path) {
+  if (photoUrls.has(path)) return photoUrls.get(path);
+  const p = S.conn ? S.conn.getPhoto(path).then(b => URL.createObjectURL(b)).catch(() => "") : Promise.resolve("");
+  photoUrls.set(path, p);
+  return p;
 }
 function fillPhotos(root) {
   root.querySelectorAll("img[data-photo]").forEach(async img => {
     const u = await photoUrl(img.dataset.photo);
-    if (u) img.src = u; else img.alt = "Фото не найдено";
+    if (u) img.src = u; else img.alt = "Фото не загрузилось";
   });
 }
 
 /* ---------- totals ---------- */
 function stats() {
-  const start = S.budget?.startDate;
-  const rs = S.receipts.filter(r => !start || (r.date || "") >= start);
+  const start = S.data.budget?.startDate;
+  const rs = S.data.receipts.filter(r => isDone(r) && (!start || (r.date || "") >= start));
   let spent = 0;
   const cat = new Map(), typ = new Map();
   const add = (m, k, v) => m.set(k, (m.get(k) || 0) + v);
@@ -136,10 +146,25 @@ function render() {
   $("byCat").innerHTML = bars(st.cat);
   $("byType").innerHTML = bars(st.typ);
   renderList();
+  const ok = S.state === "ready" && !S.busy;
+  for (const id of ["camBtn", "galBtn", "manualBtn", "fab"]) $(id).disabled = !ok;
+  schedulePoll();
 }
 
 function renderBudget(st) {
-  const el = $("budgetCard"), b = S.budget;
+  const el = $("budgetCard"), b = S.data.budget;
+  if (S.state === "setup") {
+    el.innerHTML = `<div class="slip-head"><span class="eyebrow">Подключение</span></div>
+      <p class="hint">Чеки хранятся в вашем приватном репозитории на GitHub. Чтобы сайт мог их читать и сохранять, один раз добавьте токен доступа на этом устройстве.</p>
+      <div><button class="btn primary" type="button" data-act="settings">Подключить хранилище</button></div>`;
+    return;
+  }
+  if (S.state === "loading") { el.innerHTML = `<div class="slip-head"><span class="eyebrow">Бюджет</span></div><p class="muted">Загружаю данные…</p>`; return; }
+  if (S.state === "error") {
+    el.innerHTML = `<div class="slip-head"><span class="eyebrow">Бюджет</span></div><p class="hint">Данные не загрузились.</p>
+      <div class="row"><button class="btn small" type="button" data-act="reload">Повторить</button><button class="btn small ghost" type="button" data-act="settings">Настройки</button></div>`;
+    return;
+  }
   if (!b || S.editBudget) {
     if (!$("budgetForm")) el.innerHTML = budgetForm(b);
     return;
@@ -175,13 +200,11 @@ function renderBudget(st) {
 }
 
 function budgetForm(b) {
-  const c0 = b?.currency || "₽";
   return `
     <div class="slip-head"><span class="eyebrow">${b ? "Изменить бюджет" : "Начните с бюджета"}</span></div>
     <form id="budgetForm" class="bform">
       <label for="bDate">Дата старта<input type="date" id="bDate" required value="${esc(b?.startDate || today())}"></label>
-      <label for="bAmt">Сумма на старте<input id="bAmt" inputmode="decimal" required placeholder="50 000" value="${b ? esc(toIn(b.startAmount)) : ""}"></label>
-      <label for="bCur">Валюта<select id="bCur">${CURS.map(c => `<option ${c === c0 ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+      <label for="bAmt">Сумма на старте, ₴<input id="bAmt" inputmode="decimal" required placeholder="20 000" value="${b ? esc(toIn(b.startAmount)) : ""}"></label>
       <div class="row">
         <button class="btn primary" type="submit">Сохранить</button>
         ${b ? '<button class="btn ghost" type="button" data-act="cancel-budget">Отмена</button>' : ""}
@@ -202,25 +225,31 @@ function bars(entries) {
 
 function renderList() {
   const el = $("list");
-  $("rcount").textContent = S.receipts.length ? `${S.receipts.length} шт.` : "";
-  if (!S.receipts.length) {
+  const list = receipts();
+  const waiting = list.filter(r => r.status === "pending").length;
+  $("rcount").textContent = list.length ? `${list.length} шт.${waiting ? ` · ждут распознавания: ${waiting}` : ""}` : "";
+  if (S.state !== "ready") { el.innerHTML = `<p class="empty">${S.state === "loading" ? "Загружаю чеки…" : "Чеки появятся после подключения хранилища."}</p>`; return; }
+  if (!list.length) {
     el.innerHTML = `<div class="empty-state">
       <strong>Пока нет ни одного чека</strong>
-      <span>Нажмите «Сфотографировать чек». ИИ прочитает магазин, дату, позиции и итог, разложит покупки по видам затрат и продуктов, а вы проверите всё перед сохранением. Длинный чек можно снять в несколько фото через «Загрузить фото».</span>
-      ${S.settings.apiKey ? "" : '<button class="btn small" type="button" data-act="settings">Добавить ключ OpenAI</button>'}
+      <span>Нажмите «Сфотографировать чек». Фото уйдёт в очередь, и Claude на вашем компьютере прочитает магазин, дату, позиции и итог, разложит покупки по видам затрат и продуктов. Длинный чек можно снять в несколько фото через «Загрузить фото».</span>
     </div>`;
     return;
   }
-  const start = S.budget?.startDate;
-  el.innerHTML = S.receipts.map(r => {
+  const start = S.data.budget?.startDate;
+  el.innerHTML = list.map(r => {
     const open = S.open === r.id;
-    const before = start && (r.date || "") < start;
+    const before = isDone(r) && start && (r.date || "") < start;
+    const tag = r.status === "pending" ? '<span class="tag wait">ждёт распознавания</span>'
+      : r.status === "error" ? '<span class="tag err">не распознан</span>'
+      : before ? '<span class="tag">до старта</span>' : "";
+    const title = isDone(r) ? (r.store || "Без названия") : "Новый чек";
     return `<article class="rc">
       <button class="rc-row" type="button" data-act="toggle" data-id="${esc(r.id)}" aria-expanded="${open}">
         <span class="rc-date">${fmtD(r.date)}</span>
-        <span class="rc-store">${esc(r.store || "Без названия")}${before ? '<span class="tag">до старта</span>' : ""}</span>
-        <span class="rc-n">${(r.items || []).length} поз.</span>
-        <span class="rc-total num">${money(r.total)}</span>
+        <span class="rc-store">${esc(title)}${tag}</span>
+        <span class="rc-n">${isDone(r) ? (r.items || []).length + " поз." : ""}</span>
+        <span class="rc-total num">${isDone(r) ? money(r.total) : "—"}</span>
       </button>
       ${open ? detail(r) : ""}
     </article>`;
@@ -229,12 +258,29 @@ function renderList() {
 }
 
 function detail(r) {
+  const sure = S.confirmDel === r.id;
+  const photos = (r.photos || []).length ? `<div class="photos">${r.photos.map(p => `<img data-photo="${esc(p)}" data-act="zoom" alt="Фото чека">`).join("")}</div>` : "";
+  const delBtns = `
+      <button class="btn small danger ${sure ? "sure" : ""}" type="button" data-act="${sure ? "del-yes" : "del"}" data-id="${esc(r.id)}">${sure ? "Да, удалить чек" : "Удалить"}</button>
+      ${sure ? `<button class="btn small ghost" type="button" data-act="del-no">Отмена</button>` : ""}`;
+  if (r.status === "pending" || r.status === "error") {
+    return `<div class="rc-detail">
+      ${photos}
+      <p class="hint">${r.status === "pending"
+        ? "Чек распознается, когда на компьютере запущено «Распознавание чеков». Можно не ждать и заполнить его вручную."
+        : "Claude не смог прочитать этот чек: " + esc(r.error || "причина неизвестна") + ". Попробуйте ещё раз или заполните вручную."}</p>
+      <div class="row">
+        ${r.status === "error" ? `<button class="btn small" type="button" data-act="retry" data-id="${esc(r.id)}">Распознать ещё раз</button>` : ""}
+        <button class="btn small" type="button" data-act="edit" data-id="${esc(r.id)}">Заполнить вручную</button>
+        ${delBtns}
+      </div>
+    </div>`;
+  }
   const items = r.items || [];
   const sum = r2(items.reduce((s, i) => s + (+i.price || 0), 0));
   const diff = r2((+r.total || 0) - sum);
-  const sure = S.confirmDel === r.id;
   return `<div class="rc-detail">
-    ${(r.photos || []).length ? `<div class="photos">${r.photos.map(id => `<img data-photo="${esc(id)}" data-act="zoom" alt="Фото чека">`).join("")}</div>` : ""}
+    ${photos}
     <div class="items"><table>
       <thead><tr><th>Позиция</th><th>Вид затрат</th><th>Вид продукта</th><th class="num">Сумма</th></tr></thead>
       <tbody>
@@ -245,8 +291,7 @@ function detail(r) {
     </table></div>
     <div class="row">
       <button class="btn small" type="button" data-act="edit" data-id="${esc(r.id)}">Изменить</button>
-      <button class="btn small danger ${sure ? "sure" : ""}" type="button" data-act="${sure ? "del-yes" : "del"}" data-id="${esc(r.id)}">${sure ? "Да, удалить чек" : "Удалить"}</button>
-      ${sure ? `<button class="btn small ghost" type="button" data-act="del-no">Отмена</button>` : ""}
+      ${delBtns}
     </div>
   </div>`;
 }
@@ -260,9 +305,7 @@ function openSheet(kind) {
 }
 function openDraft(d) { S.draft = d; openSheet("receipt"); }
 function closeSheet() {
-  S.ctl?.abort();
-  (S.draft?.previews || []).forEach(u => URL.revokeObjectURL(u));
-  S.draft = null; S.sheet = null; S.returnTo = null;
+  S.draft = null; S.sheet = null;
   $("sheetWrap").hidden = true;
   document.body.classList.remove("lock");
 }
@@ -270,37 +313,21 @@ function closeSheet() {
 function renderSheet() {
   const d = S.draft, el = $("sheet");
   if (!d) return;
-  const thumbs = [
-    ...(d.photos || []).map(id => `<img data-photo="${esc(id)}" alt="Фото чека">`),
-    ...(d.previews || []).map(u => `<img src="${esc(u)}" alt="Фото чека">`)
-  ].join("");
-  if (d.state === "reading") {
-    el.innerHTML = `
-      <header class="sh-head"><h2>Читаю чек</h2><button class="x" type="button" data-act="close" aria-label="Закрыть">×</button></header>
-      <div class="thumbs">${thumbs}</div>
-      <div class="reading"><span class="spin" aria-hidden="true"></span><span class="muted">ИИ разбирает позиции и категории. Обычно это 5–30 секунд.</span></div>
-      <div class="row"><button class="btn ghost" type="button" data-act="stop">Остановить и ввести вручную</button></div>`;
-    fillPhotos(el);
-    return;
-  }
+  const thumbs = (d.photos || []).map(p => `<img data-photo="${esc(p)}" alt="Фото чека">`).join("");
   el.innerHTML = `
-    <header class="sh-head"><h2>${d.id ? "Изменить чек" : "Новый чек"}</h2><button class="x" type="button" data-act="close" aria-label="Закрыть">×</button></header>
+    <header class="sh-head"><h2>${d.isNew ? "Новый чек" : "Чек"}</h2><button class="x" type="button" data-act="close" aria-label="Закрыть">×</button></header>
     ${d.msg ? `<p class="notice">${esc(d.msg)}</p>` : ""}
     ${thumbs ? `<div class="thumbs">${thumbs}</div>` : ""}
-    ${d.files?.length && (d.failed || d.needKey) ? `<div class="row">
-      ${d.needKey ? '<button class="btn small" type="button" data-act="settings">Добавить ключ OpenAI</button>' : ""}
-      ${S.settings.apiKey ? '<button class="btn small" type="button" data-act="retry">Распознать ещё раз</button>' : ""}
-    </div>` : ""}
     <div class="fields">
-      <label for="dStore">Магазин<input id="dStore" value="${esc(d.store)}" placeholder="Например, Пятёрочка" autocomplete="off"></label>
+      <label for="dStore">Магазин<input id="dStore" value="${esc(d.store)}" placeholder="Например, Сільпо" autocomplete="off"></label>
       <label for="dDate">Дата покупки<input type="date" id="dDate" value="${esc(d.date)}"></label>
     </div>
-    <div class="ihead"><span>Позиция</span><span>Вид затрат</span><span>Вид продукта</span><span>Сумма</span><span></span></div>
+    <div class="ihead"><span>Позиция</span><span>Вид затрат</span><span>Вид продукта</span><span>Сумма, ₴</span><span></span></div>
     <div id="irows">${d.items.map(rowHtml).join("")}</div>
     <div><button class="btn ghost small" type="button" data-act="add-row">+ Добавить позицию</button></div>
     <div class="totals">
       <div><span>Сумма позиций</span><strong class="num" id="iSum"></strong></div>
-      <label class="tot" for="dTotal">Итого по чеку<input id="dTotal" inputmode="decimal" value="${esc(d.total)}" placeholder="0,00"></label>
+      <label class="tot" for="dTotal">Итого по чеку, ₴<input id="dTotal" inputmode="decimal" value="${esc(d.total)}" placeholder="0,00"></label>
       <p class="diff" id="iDiff"></p>
     </div>
     <div class="row end">
@@ -337,127 +364,29 @@ function renderSettings() {
   $("sheet").innerHTML = `
     <header class="sh-head"><h2>Настройки</h2><button class="x" type="button" data-act="close" aria-label="Закрыть">×</button></header>
     <form id="setForm" class="bform">
-      <h3>Распознавание чеков (OpenAI)</h3>
-      <label for="sKey">Ключ OpenAI API
+      <h3>Хранилище на GitHub</h3>
+      <p class="hint">Чеки и фото лежат в приватном репозитории <b>${esc(s.repo || DEFAULT_REPO)}</b>. Чтобы сайт мог с ним работать, на каждом устройстве один раз вставьте токен доступа.</p>
+      <ol class="hint steps">
+        <li>Откройте <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com → новый fine-grained токен</a>.</li>
+        <li>Token name: <i>чеки</i>. Expiration: <i>No expiration</i> или год.</li>
+        <li>Repository access: <i>Only select repositories</i> → <i>cheki-data</i>.</li>
+        <li>Permissions → Repository permissions → <i>Contents</i>: <i>Read and write</i>.</li>
+        <li>Нажмите Generate token, скопируйте его и вставьте сюда.</li>
+      </ol>
+      <label for="sToken">Токен GitHub
         <span class="keyrow">
-          <input type="password" id="sKey" autocomplete="off" spellcheck="false" placeholder="${s.apiKey ? "Ключ сохранён. Вставьте новый, чтобы заменить" : "sk-..."}">
+          <input type="password" id="sToken" autocomplete="off" spellcheck="false" placeholder="${s.token ? "Токен сохранён. Вставьте новый, чтобы заменить" : "github_pat_..."}">
           <button class="btn small ghost" type="button" data-act="key-show">Показать</button>
         </span>
       </label>
-      <p class="hint">Ключ хранится только в этом браузере на этом устройстве и отправляется напрямую в OpenAI. В код сайта и на GitHub он не попадает. Поставьте месячный лимит расходов в кабинете OpenAI (Billing → Limits).</p>
-      <label for="sModel">Модель<input id="sModel" list="modelList" value="${esc(s.model || DEFAULT_MODEL)}" autocomplete="off" spellcheck="false"></label>
-      <datalist id="modelList">${MODELS.map(m => `<option value="${m}"></option>`).join("")}</datalist>
+      <p class="hint">Токен хранится только в этом браузере. Он даёт доступ лишь к репозиторию с чеками.</p>
+      <label for="sRepo">Репозиторий с данными<input id="sRepo" value="${esc(s.repo || DEFAULT_REPO)}" autocomplete="off" spellcheck="false"></label>
+      <p class="hint" id="setMsg"></p>
       <div class="row">
-        <button class="btn primary" type="submit">Сохранить</button>
-        ${s.apiKey ? '<button class="btn ghost danger" type="button" data-act="key-clear">Удалить ключ</button>' : ""}
+        <button class="btn primary" type="submit" id="setSave">Сохранить и проверить</button>
+        ${s.token ? '<button class="btn ghost danger" type="button" data-act="key-clear">Отключить это устройство</button>' : ""}
       </div>
-    </form>
-    <div class="rule"></div>
-    <h3>Данные</h3>
-    <p class="hint">Чеки и фото хранятся в этом браузере. На другом устройстве будет свой список. Чтобы перенести данные или сохранить их на всякий случай, скачайте резервную копию и загрузите её на другом устройстве.</p>
-    <div class="row">
-      <button class="btn" type="button" data-act="export">Скачать резервную копию</button>
-      <button class="btn" type="button" data-act="import">Загрузить копию</button>
-    </div>`;
-}
-
-/* ---------- OpenAI ---------- */
-function receiptPrompt() {
-  return `Перед тобой фото кассового чека. Если фото несколько, это части одного длинного чека по порядку.
-Верни только JSON такого вида:
-{"store": "Название магазина", "date": "YYYY-MM-DD", "total": 1234.5, "items": [{"name": "Молоко 3,2% 1 л", "price": 89.9, "category": "Продукты", "type": "Молочное и яйца"}]}
-
-Правила:
-- store: короткое название магазина или заведения, как его называют люди (без ООО/ИП, адреса и ИНН).
-- date: дата покупки из чека в формате YYYY-MM-DD; если не читается, null. Сегодня ${today()}.
-- items: каждая строка товара или услуги. price — итоговая сумма по строке с учётом количества и скидки на строку, числом. name — понятное короткое название на русском без артикулов и кодов; если количество больше одного, допиши «×N».
-- category: строго одно значение из списка: ${EXP.join("; ")}.
-- type: вид продукта. Для еды и напитков строго одно значение из списка: ${FOOD.join("; ")}. Для остального — короткий общий вид в 1–3 слова, например «Моющие средства», «Лекарства», «Бензин», «Корм».
-- Если в чеке есть общая скидка, оплата бонусами или округление, добавь отдельную строку с отрицательной price (name «Скидка»), category и type как у большей части покупок, чтобы сумма всех price равнялась total.
-- total: сумма к оплате по чеку, числом.
-- Если на фото не чек или его невозможно прочитать, верни {"error": "коротко, что не так"}.`;
-}
-
-const blobToDataURL = b => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(fr.error); fr.readAsDataURL(b); });
-
-async function askOpenAI(files, signal) {
-  const images = await Promise.all(files.map(blobToDataURL));
-  const body = {
-    model: S.settings.model || DEFAULT_MODEL,
-    response_format: { type: "json_object" },
-    messages: [{
-      role: "user",
-      content: [{ type: "text", text: receiptPrompt() }, ...images.map(url => ({ type: "image_url", image_url: { url, detail: "high" } }))]
-    }]
-  };
-  let resp;
-  try {
-    resp = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + S.settings.apiKey },
-      body: JSON.stringify(body),
-      signal
-    });
-  } catch (e) {
-    if (e?.name === "AbortError") throw { code: "cancelled" };
-    throw { code: "network" };
-  }
-  const j = await resp.json().catch(() => null);
-  if (!resp.ok) throw { code: "http", status: resp.status, message: j?.error?.message || resp.statusText };
-  const text = j?.choices?.[0]?.message?.content || "";
-  try { return JSON.parse(text); } catch {}
-  const m = text.match(/\{[\s\S]*\}/);
-  if (m) { try { return JSON.parse(m[0]); } catch {} }
-  throw { code: "bad_json" };
-}
-
-function aiErr(e) {
-  if (e?.code === "cancelled") return "Распознавание остановлено. Заполните позиции вручную.";
-  if (e?.code === "network") return "Нет связи с OpenAI. Проверьте интернет (в некоторых странах OpenAI доступен только через VPN) и нажмите «Распознать ещё раз».";
-  if (e?.code === "bad_json") return "Не получилось прочитать чек. Снимите его ближе и ровнее или заполните позиции вручную.";
-  if (e?.code === "http") {
-    if (e.status === 401) return "OpenAI не принял ключ. Проверьте его в настройках.";
-    if (e.status === 429) return "OpenAI отказал: закончились средства на балансе или превышен лимит запросов. Пополните баланс или подождите минуту.";
-    if (e.status === 400 || e.status === 404) return `OpenAI вернул ошибку: ${e.message}. Если дело в модели, выберите другую в настройках.`;
-    return `OpenAI временно недоступен (${e.status}). Попробуйте ещё раз чуть позже.`;
-  }
-  return "Что-то пошло не так. Заполните позиции вручную или попробуйте ещё раз.";
-}
-
-function itemFromAI(it) {
-  return {
-    name: String(it?.name || "").trim(),
-    price: toIn(num(it?.price)),
-    category: EXP.includes(it?.category) ? it.category : "Другое",
-    type: String(it?.type || "").trim()
-  };
-}
-
-async function recognize(d) {
-  d.state = "reading"; d.msg = ""; d.failed = false; d.needKey = false;
-  renderSheet();
-  const ctl = new AbortController(); S.ctl = ctl;
-  try {
-    const res = await askOpenAI(d.files.slice(0, MAX_IMAGES), ctl.signal);
-    if (S.draft !== d) return;
-    if (!res || typeof res !== "object" || res.error) {
-      d.failed = true;
-      d.msg = `Не похоже на чек${res?.error ? ": " + res.error : ""}. Снимите ещё раз или заполните вручную.`;
-    } else {
-      d.store = String(res.store || "").trim();
-      d.date = isoD(res.date) ? res.date : today();
-      d.items = Array.isArray(res.items) ? res.items.map(itemFromAI).filter(i => i.name || num(i.price)) : [];
-      d.total = res.total != null && isFinite(+res.total) ? toIn(+res.total) : "";
-      d.msg = d.items.length ? "Проверьте позиции и категории, затем сохраните." : "Позиции не распознались. Заполните их вручную.";
-    }
-  } catch (e) {
-    if (S.draft !== d) return;
-    d.failed = e?.code !== "cancelled";
-    d.msg = aiErr(e);
-  }
-  if (!d.items.length) d.items = [blankItem()];
-  d.state = "edit";
-  renderSheet();
+    </form>`;
 }
 
 /* ---------- photos in, receipts out ---------- */
@@ -477,17 +406,30 @@ async function shrink(file) {
 async function onFiles(e) {
   const list = [...(e.target.files || [])];
   e.target.value = "";
-  if (!list.length) return;
-  const files = await Promise.all(list.slice(0, MAX_IMAGES).map(shrink));
+  if (!list.length || S.state !== "ready") return;
   if (list.length > MAX_IMAGES) toast(`Взяты первые ${MAX_IMAGES} фото`);
-  const d = { store: "", date: today(), total: "", items: [], photos: [], files, previews: files.map(f => URL.createObjectURL(f)), state: "edit" };
-  if (S.settings.apiKey) { openDraft(d); recognize(d); }
-  else {
-    d.items = [blankItem()];
-    d.needKey = true;
-    d.msg = "Чтобы чек распознавался сам, добавьте ключ OpenAI в настройках. Или заполните позиции вручную, фото сохранится с чеком.";
-    openDraft(d);
+  S.busy = true; render();
+  notice("Отправляю фото чека…");
+  const id = uid(), paths = [];
+  try {
+    const files = await Promise.all(list.slice(0, MAX_IMAGES).map(shrink));
+    for (let i = 0; i < files.length; i++) {
+      const path = `photos/${id}-${i + 1}.jpg`;
+      await S.conn.putPhoto(path, files[i]);
+      paths.push(path);
+    }
+    const now = new Date().toISOString();
+    await save(d => {
+      d.receipts.push({ id, status: "pending", date: today(), store: "", total: 0, items: [], photos: paths, createdAt: now, updatedAt: now });
+    }, "Новый чек в очереди");
+    S.open = id;
+    notice("");
+    toast("Чек в очереди на распознавание");
+  } catch (err) {
+    for (const p of paths) S.conn.deleteFile(p).catch(() => {});
+    notice(ghErr(err));
   }
+  S.busy = false; render();
 }
 
 async function saveDraft() {
@@ -504,62 +446,23 @@ async function saveDraft() {
   const total = String(d.total).trim() !== "" ? r2(num(d.total)) : sum;
   if (!items.length && !total) { d.msg = "Добавьте хотя бы одну позицию или итог по чеку."; renderSheet(); return; }
   const btn = $("saveBtn"); btn.disabled = true; btn.textContent = "Сохраняю…";
+  const now = new Date().toISOString();
+  const rec = {
+    id: d.id, status: "done", store: String(d.store || "").trim(), date: isoD(d.date) ? d.date : today(), total, items,
+    photos: d.photos || [], createdAt: d.createdAt || now, updatedAt: now
+  };
   try {
-    for (const f of d.files || []) { const pid = uid(); await putPhoto(pid, f); d.photos.push(pid); }
-    d.files = [];
-    const now = new Date().toISOString();
-    const id = d.id || uid();
-    await putReceipt({
-      id, store: String(d.store || "").trim(), date: isoD(d.date) ? d.date : today(), total, items,
-      photos: d.photos || [], createdAt: d.createdAt || now, updatedAt: now
-    });
-    S.open = id;
+    await save(data => {
+      const i = data.receipts.findIndex(r => r.id === rec.id);
+      if (i >= 0) data.receipts[i] = rec; else data.receipts.push(rec);
+    }, `Чек: ${rec.store || "без названия"}, ${rec.total} ₴`);
+    S.open = rec.id;
     closeSheet();
-    await reload();
+    render();
     toast("Чек сохранён");
   } catch (e) {
-    d.msg = e?.name === "QuotaExceededError"
-      ? "В браузере закончилось место. Удалите старые чеки или скачайте копию и очистите данные."
-      : "Не удалось сохранить чек в браузере. Попробуйте ещё раз.";
+    d.msg = ghErr(e);
     renderSheet();
-  }
-}
-
-function downloadFile(name, text) {
-  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
-  const a = document.createElement("a");
-  a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-async function exportData() {
-  const photos = {};
-  for (const r of S.receipts) for (const p of r.photos || []) {
-    const rec = await getPhoto(p).catch(() => null);
-    if (rec?.blob) photos[p] = await blobToDataURL(rec.blob);
-  }
-  const data = { app: "cheki", version: 1, exportedAt: new Date().toISOString(), budget: S.budget, receipts: S.receipts, photos };
-  downloadFile(`cheki-${today()}.json`, JSON.stringify(data));
-  toast("Резервная копия скачана");
-}
-
-async function importData(e) {
-  const f = e.target.files?.[0]; e.target.value = "";
-  if (!f) return;
-  try {
-    const data = JSON.parse(await f.text());
-    if (data?.app !== "cheki" || !Array.isArray(data.receipts)) throw new Error("format");
-    for (const [id, url] of Object.entries(data.photos || {})) {
-      const blob = await (await fetch(url)).blob();
-      await putPhoto(id, blob);
-    }
-    for (const r of data.receipts) if (r?.id) await putReceipt(r);
-    if (data.budget && !S.budget) { S.budget = data.budget; lsSet("budget", S.budget); }
-    closeSheet();
-    await reload();
-    toast(`Загружено чеков: ${data.receipts.length}`);
-  } catch {
-    toast("Не получилось прочитать файл. Нужна резервная копия, скачанная с этого сайта.");
   }
 }
 
@@ -571,27 +474,37 @@ document.addEventListener("click", async e => {
   switch (act) {
     case "edit-budget": S.editBudget = true; $("budgetCard").innerHTML = ""; render(); break;
     case "cancel-budget": S.editBudget = false; $("budgetCard").innerHTML = ""; render(); break;
+    case "reload": connect(); break;
     case "toggle": S.open = S.open === id ? null : id; S.confirmDel = null; renderList(); break;
     case "edit": {
-      const r = S.receipts.find(x => x.id === id); if (!r) return;
+      const r = S.data.receipts.find(x => x.id === id); if (!r) return;
       const items = (r.items || []).map(i => ({ name: i.name, price: toIn(i.price), category: i.category, type: i.type || "" }));
       openDraft({
-        id: r.id, store: r.store || "", date: r.date || today(), total: toIn(r.total), createdAt: r.createdAt,
-        items: items.length ? items : [blankItem()], photos: [...(r.photos || [])], files: [], previews: [], state: "edit"
+        id: r.id, store: r.store || "", date: r.date || today(), total: isDone(r) ? toIn(r.total) : "", createdAt: r.createdAt,
+        items: items.length ? items : [blankItem()], photos: [...(r.photos || [])], isNew: !isDone(r)
       });
       break;
     }
+    case "retry":
+      try {
+        await save(data => {
+          const r = data.receipts.find(x => x.id === id); if (!r) return false;
+          r.status = "pending"; delete r.error;
+        }, "Повторное распознавание");
+        toast("Чек снова в очереди");
+      } catch (err) { toast(ghErr(err)); }
+      break;
     case "del": S.confirmDel = id; renderList(); break;
     case "del-no": S.confirmDel = null; renderList(); break;
     case "del-yes": {
-      const r = S.receipts.find(x => x.id === id); if (!r) return;
+      const r = S.data.receipts.find(x => x.id === id); if (!r) return;
       t.disabled = true;
       try {
-        await deleteReceipt(r);
-        S.confirmDel = null; S.open = null;
-        await reload();
+        await save(data => { data.receipts = data.receipts.filter(x => x.id !== id); }, "Удалён чек");
+        S.confirmDel = null; S.open = null; render();
         toast("Чек удалён");
-      } catch { toast("Не удалось удалить чек"); t.disabled = false; }
+        for (const p of r.photos || []) await S.conn.deleteFile(p).catch(() => {});
+      } catch (err) { toast(ghErr(err)); t.disabled = false; }
       break;
     }
     case "zoom": {
@@ -602,22 +515,12 @@ document.addEventListener("click", async e => {
       document.body.append(v);
       break;
     }
-    case "settings":
-      if (S.sheet === "receipt" && d) { S.returnTo = d; }
-      openSheet("settings");
-      break;
-    case "key-show": { const k = $("sKey"); k.type = k.type === "password" ? "text" : "password"; t.textContent = k.type === "password" ? "Показать" : "Скрыть"; break; }
+    case "settings": openSheet("settings"); break;
+    case "key-show": { const k = $("sToken"); k.type = k.type === "password" ? "text" : "password"; t.textContent = k.type === "password" ? "Показать" : "Скрыть"; break; }
     case "key-clear":
-      S.settings.apiKey = ""; lsSet("settings", S.settings); renderSettings(); toast("Ключ удалён из браузера");
+      S.settings.token = ""; lsSet("settings", S.settings); closeSheet(); connect(); toast("Устройство отключено");
       break;
-    case "export": exportData(); break;
-    case "import": $("impIn").click(); break;
-    case "close":
-      if (S.sheet === "settings" && S.returnTo) { S.draft = S.returnTo; S.returnTo = null; openSheet("receipt"); }
-      else closeSheet();
-      break;
-    case "stop": S.ctl?.abort(); break;
-    case "retry": if (d) recognize(d); break;
+    case "close": closeSheet(); break;
     case "add-row": if (d) { d.items.push(blankItem()); renderSheet(); $("irows").lastElementChild?.querySelector("input")?.focus(); } break;
     case "del-row": if (d) { d.items.splice(+t.dataset.i, 1); if (!d.items.length) d.items.push(blankItem()); renderSheet(); } break;
     case "save": saveDraft(); break;
@@ -640,30 +543,41 @@ $("sheet").addEventListener("change", e => {
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
   const v = document.querySelector(".viewer"); if (v) { v.remove(); return; }
-  if (S.sheet && S.draft?.state !== "reading") closeSheet();
+  if (S.sheet) closeSheet();
 });
 
-document.addEventListener("submit", e => {
+document.addEventListener("submit", async e => {
   e.preventDefault();
   if (e.target.id === "budgetForm") {
     const amt = r2(num($("bAmt").value));
     const date = $("bDate").value;
     if (!isoD(date) || !(amt > 0)) { toast("Укажите дату и сумму больше нуля"); return; }
-    S.budget = { startDate: date, startAmount: amt, currency: $("bCur").value };
-    if (!lsSet("budget", S.budget)) toast("Браузер не дал сохранить бюджет");
-    S.editBudget = false; $("budgetCard").innerHTML = "";
-    render(); toast("Бюджет сохранён");
+    const btn = e.target.querySelector("[type=submit]"); btn.disabled = true;
+    try {
+      S.editBudget = false;
+      await save(data => { data.budget = { startDate: date, startAmount: amt }; }, `Бюджет: ${amt} ₴ с ${date}`);
+      $("budgetCard").innerHTML = ""; render();
+      toast("Бюджет сохранён");
+    } catch (err) { S.editBudget = !!S.data.budget; toast(ghErr(err)); btn.disabled = false; }
   }
   if (e.target.id === "setForm") {
-    const key = $("sKey").value.trim();
-    if (key) S.settings.apiKey = key;
-    S.settings.model = $("sModel").value.trim() || DEFAULT_MODEL;
-    lsSet("settings", S.settings);
-    toast("Настройки сохранены");
-    if (S.returnTo) {
-      const d = S.returnTo; S.returnTo = null; S.draft = d; openSheet("receipt");
-      if (S.settings.apiKey && d.files?.length) recognize(d);
-    } else { closeSheet(); render(); }
+    const token = $("sToken").value.trim() || S.settings.token;
+    const repo = $("sRepo").value.trim() || DEFAULT_REPO;
+    const msg = $("setMsg"), btn = $("setSave");
+    if (!token) { msg.textContent = "Вставьте токен."; return; }
+    btn.disabled = true; msg.textContent = "Проверяю доступ…";
+    try {
+      const info = await GH.connect({ token, repo }).check();
+      if (!info.canPush) throw Object.assign(new Error("no push"), { status: 403 });
+      S.settings = { token, repo };
+      lsSet("settings", S.settings);
+      closeSheet();
+      connect();
+      toast(info.private ? "Хранилище подключено" : "Подключено, но репозиторий публичный: чеки видны всем");
+    } catch (err) {
+      msg.textContent = ghErr(err);
+      btn.disabled = false;
+    }
   }
 });
 
@@ -671,15 +585,9 @@ $("camBtn").onclick = $("fab").onclick = () => $("camIn").click();
 $("galBtn").onclick = () => $("galIn").click();
 $("camIn").onchange = onFiles;
 $("galIn").onchange = onFiles;
-$("impIn").onchange = importData;
-$("manualBtn").onclick = () => openDraft({ store: "", date: today(), total: "", items: [blankItem()], photos: [], files: [], previews: [], state: "edit" });
+$("manualBtn").onclick = () => openDraft({ id: uid(), store: "", date: today(), total: "", items: [blankItem()], photos: [], isNew: true });
 $("setBtn").onclick = () => openSheet("settings");
 
 /* ---------- boot ---------- */
-S.budget = lsGet("budget", null);
 S.settings = { ...S.settings, ...lsGet("settings", {}) };
-render();
-navigator.storage?.persist?.().catch(() => {});
-reload().catch(() => {
-  notice("Браузер не даёт сохранять данные (возможно, включён приватный режим). Чеки не сохранятся после закрытия вкладки.");
-});
+connect();

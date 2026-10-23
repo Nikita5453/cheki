@@ -1,4 +1,5 @@
 .claude/
 .env
-*.json.bak
-cheki-*.json
+data/
+worker/*.log
+__pycache__/
