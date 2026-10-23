@@ -325,7 +325,9 @@ function renderList() {
     const tag = r.status === "pending" ? '<span class="tag wait">ждёт распознавания</span>'
       : r.status === "error" ? '<span class="tag err">не распознан</span>'
       : before ? '<span class="tag">до старта</span>' : "";
-    const title = isDone(r) ? (r.store || "Без названия") : "Новый чек";
+    const kinds = [...new Set((r.items || []).map(i => i.type || i.name).filter(Boolean))];
+    const title = !isDone(r) ? "Новый чек"
+      : r.store || (kinds.length ? kinds.slice(0, 3).join(", ") + (kinds.length > 3 ? "…" : "") : "Без названия");
     return `<article class="rc">
       <button class="rc-row" type="button" data-act="toggle" data-id="${esc(r.id)}" aria-expanded="${open}">
         <span class="rc-date">${fmtD(r.date)}</span>
@@ -392,9 +394,95 @@ function closeSheet() {
   document.body.classList.remove("lock");
 }
 
+/* ---------- quick manual entry: pick what was bought, type how much ---------- */
+const OTHER = EXP.filter(c => c !== "Продукты" && c !== "Другое");
+
+/* Choices: food types, other expense kinds, and any extra kinds already used in saved receipts. */
+function pickGroups() {
+  const food = [...FOOD], other = OTHER.map(c => ({ type: c, category: c }));
+  const known = new Set([...FOOD, ...OTHER, "Другое"]);
+  for (const r of S.data.receipts) for (const it of r.items || []) {
+    const t = String(it.type || "").trim();
+    if (!t || known.has(t)) continue;
+    known.add(t);
+    if (it.category === "Продукты") food.push(t);
+    else other.push({ type: t, category: EXP.includes(it.category) ? it.category : "Другое" });
+  }
+  return [
+    { title: "Продукты", opts: food.map(t => ({ type: t, category: "Продукты" })) },
+    { title: "Остальное", opts: [...other, { type: "Другое", category: "Другое" }] }
+  ];
+}
+
+function simpleDraft(base, items) {
+  return { ...base, simple: true, picks: (items || []).map(i => ({ type: i.type || i.name, category: i.category, price: toIn(i.price) })) };
+}
+
+function renderSimple() {
+  const d = S.draft, el = $("sheet");
+  const chosen = new Set(d.picks.map(p => p.type));
+  const thumbs = (d.photos || []).map(p => `<img data-photo="${esc(p)}" alt="Фото чека">`).join("");
+  el.innerHTML = `
+    <header class="sh-head"><h2>${d.isNew ? "Новый чек" : "Чек"}</h2><button class="x" type="button" data-act="close" aria-label="Закрыть">×</button></header>
+    ${d.msg ? `<p class="notice">${esc(d.msg)}</p>` : ""}
+    ${thumbs ? `<div class="thumbs">${thumbs}</div>` : ""}
+    <label for="dDate" class="date-only">Дата покупки<input type="date" id="dDate" value="${esc(d.date)}"></label>
+    <div class="picker">
+      ${pickGroups().map(g => `<div class="pgroup"><span class="eyebrow">${g.title}</span><div class="chips">${g.opts.map(o =>
+        `<button type="button" class="chip" data-act="pick" data-type="${esc(o.type)}" data-cat="${esc(o.category)}" aria-pressed="${chosen.has(o.type)}">${esc(o.type)}</button>`).join("")}</div></div>`).join("")}
+    </div>
+    <div class="picks">
+      <span class="eyebrow">Сколько потратили</span>
+      ${d.picks.length ? d.picks.map((p, i) => `<div class="prow">
+        <span>${esc(p.type)}</span>
+        <input class="i-price" data-p="${i}" inputmode="decimal" value="${esc(p.price)}" placeholder="0,00" aria-label="Сумма: ${esc(p.type)}">
+        <button class="i-del" type="button" data-act="unpick" data-i="${i}" aria-label="Убрать: ${esc(p.type)}">×</button>
+      </div>`).join("") : '<p class="hint">Отметьте выше, что купили. Можно выбрать несколько.</p>'}
+    </div>
+    <div class="totals"><div><span>Итого по чеку</span><strong class="num" id="pSum"></strong></div></div>
+    <div class="row end">
+      <button class="btn ghost" type="button" data-act="close">Отмена</button>
+      <button class="btn primary" type="button" data-act="save" id="saveBtn">Сохранить чек</button>
+    </div>`;
+  fillPhotos(el);
+  updatePickSum();
+}
+
+function updatePickSum() {
+  const d = S.draft;
+  if (d?.simple && $("pSum")) $("pSum").textContent = money(d.picks.reduce((s, p) => s + num(p.price), 0));
+}
+
+async function saveSimple() {
+  const d = S.draft;
+  const items = d.picks.filter(p => num(p.price))
+    .map(p => ({ name: p.type, price: r2(num(p.price)), category: EXP.includes(p.category) ? p.category : "Другое", type: p.type }));
+  if (!items.length) { d.msg = "Отметьте, что купили, и впишите сумму."; renderSimple(); return; }
+  const btn = $("saveBtn"); btn.disabled = true; btn.textContent = "Сохраняю…";
+  const now = new Date().toISOString();
+  const rec = {
+    id: d.id, status: "done", manual: true, store: "", date: isoD(d.date) ? d.date : today(),
+    total: r2(items.reduce((s, i) => s + i.price, 0)), items, photos: d.photos || [], createdAt: d.createdAt || now, updatedAt: now
+  };
+  try {
+    await save(data => {
+      const i = data.receipts.findIndex(r => r.id === rec.id);
+      if (i >= 0) data.receipts[i] = rec; else data.receipts.push(rec);
+    }, `Чек вручную: ${rec.total} ₴`);
+    S.open = rec.id;
+    closeSheet();
+    render();
+    toast("Чек сохранён");
+  } catch (e) {
+    d.msg = ghErr(e);
+    renderSimple();
+  }
+}
+
 function renderSheet() {
   const d = S.draft, el = $("sheet");
   if (!d) return;
+  if (d.simple) { renderSimple(); return; }
   const thumbs = (d.photos || []).map(p => `<img data-photo="${esc(p)}" alt="Фото чека">`).join("");
   el.innerHTML = `
     <header class="sh-head"><h2>${d.isNew ? "Новый чек" : "Чек"}</h2><button class="x" type="button" data-act="close" aria-label="Закрыть">×</button></header>
@@ -516,6 +604,7 @@ async function onFiles(e) {
 
 async function saveDraft() {
   const d = S.draft; if (!d) return;
+  if (d.simple) return saveSimple();
   const items = d.items
     .filter(it => String(it.name).trim() || num(it.price))
     .map(it => ({
@@ -571,6 +660,11 @@ document.addEventListener("click", async e => {
     case "toggle": S.open = S.open === id ? null : id; S.confirmDel = null; renderList(); break;
     case "edit": {
       const r = S.data.receipts.find(x => x.id === id); if (!r) return;
+      /* Typed-in receipts and ones not yet recognized use the quick form; recognized ones keep the full editor. */
+      if (r.manual || !isDone(r)) {
+        openDraft(simpleDraft({ id: r.id, date: r.date || defaultDate(), createdAt: r.createdAt, photos: [...(r.photos || [])], isNew: !isDone(r) }, r.items));
+        break;
+      }
       const items = (r.items || []).map(i => ({ name: i.name, price: toIn(i.price), category: i.category, type: i.type || "" }));
       openDraft({
         id: r.id, store: r.store || "", date: r.date || today(), total: isDone(r) ? toIn(r.total) : "", createdAt: r.createdAt,
@@ -614,6 +708,13 @@ document.addEventListener("click", async e => {
       S.settings.token = ""; lsSet("settings", S.settings); closeSheet(); connect(); toast("Устройство отключено");
       break;
     case "close": closeSheet(); break;
+    case "pick": if (d?.simple) {
+      const type = t.dataset.type, i = d.picks.findIndex(p => p.type === type);
+      if (i >= 0) d.picks.splice(i, 1); else d.picks.push({ type, category: t.dataset.cat, price: "" });
+      renderSimple();
+      if (i < 0) document.querySelector(`[data-p="${d.picks.length - 1}"]`)?.focus();
+    } break;
+    case "unpick": if (d?.simple) { d.picks.splice(+t.dataset.i, 1); renderSimple(); } break;
     case "add-row": if (d) { d.items.push(blankItem()); renderSheet(); $("irows").lastElementChild?.querySelector("input")?.focus(); } break;
     case "del-row": if (d) { d.items.splice(+t.dataset.i, 1); if (!d.items.length) d.items.push(blankItem()); renderSheet(); } break;
     case "save": saveDraft(); break;
@@ -623,6 +724,7 @@ document.addEventListener("click", async e => {
 $("sheet").addEventListener("input", e => {
   const d = S.draft; if (!d || S.sheet !== "receipt") return;
   const t = e.target;
+  if (t.dataset.p != null) { d.picks[+t.dataset.p].price = t.value; updatePickSum(); return; }
   if (t.dataset.f) { const i = +t.closest(".irow").dataset.i; d.items[i][t.dataset.f] = t.value; }
   else if (t.id === "dStore") d.store = t.value;
   else if (t.id === "dDate") d.date = t.value;
@@ -677,7 +779,7 @@ $("camBtn").onclick = $("fab").onclick = () => $("camIn").click();
 $("galBtn").onclick = () => $("galIn").click();
 $("camIn").onchange = onFiles;
 $("galIn").onchange = onFiles;
-$("manualBtn").onclick = () => openDraft({ id: uid(), store: "", date: defaultDate(), total: "", items: [blankItem()], photos: [], isNew: true });
+$("manualBtn").onclick = () => openDraft(simpleDraft({ id: uid(), date: defaultDate(), photos: [], isNew: true }, []));
 $("setBtn").onclick = () => openSheet("settings");
 
 /* ---------- boot ---------- */

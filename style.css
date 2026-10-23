@@ -199,6 +199,17 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
 .scope { grid-column: 1 / -1; display: inline-flex; justify-self: start; background: var(--paper); border-radius: 10px; padding: 3px; gap: 2px; box-shadow: var(--shadow); }
 .scope button { font: 500 13px var(--f-body); color: var(--muted); background: none; border: 0; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
 .scope button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.date-only { max-width: 220px; }
+.picker { display: flex; flex-direction: column; gap: 12px; }
+.pgroup { display: flex; flex-direction: column; gap: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 14px var(--f-body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 99px; padding: 8px 13px; cursor: pointer; }
+.chip:hover { border-color: var(--muted); }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.picks { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--line); padding-top: 12px; }
+.prow { display: grid; grid-template-columns: minmax(0, 1fr) 120px 32px; gap: 8px; align-items: center; }
+.prow span { overflow-wrap: anywhere; }
+.prow input { padding: 8px 10px; }
 .mnav { display: inline-flex; align-items: center; gap: 6px; }
 .navbtn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font: 600 20px/1 var(--f-body); cursor: pointer; }
 .navbtn:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
