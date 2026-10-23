@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Бюджет по чекам</title>
+<meta name="description" content="Стартовый бюджет, остаток и расходы по видам затрат и продуктов из сфотографированных чеков.">
+<meta name="theme-color" content="#E7ECE9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101512" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;600&family=Unbounded:wght@500;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Бюджет по чекам</h1>
+      <p class="sub">Сфотографируйте чек: ИИ прочитает позиции и разложит их по видам затрат и продуктов. Вы проверяете и сохраняете.</p>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="camBtn" type="button">Сфотографировать чек</button>
+      <button class="btn" id="galBtn" type="button">Загрузить фото</button>
+      <button class="btn ghost" id="manualBtn" type="button">Ввести вручную</button>
+      <button class="btn ghost" id="setBtn" type="button">Настройки</button>
+    </div>
+  </header>
+
+  <p class="notice" id="notice" hidden></p>
+
+  <main class="grid">
+    <div class="slip-shadow"><section class="slip" id="budgetCard" aria-label="Бюджет"></section></div>
+    <div class="breakdowns">
+      <section class="panel"><h2>По видам затрат</h2><div id="byCat"></div></section>
+      <section class="panel"><h2>По видам продуктов</h2><div id="byType"></div></section>
+    </div>
+  </main>
+
+  <section class="panel">
+    <div class="rhead"><h2>Чеки</h2><span id="rcount"></span></div>
+    <div id="list"></div>
+  </section>
+</div>
+
+<input type="file" id="camIn" class="sr" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+<input type="file" id="galIn" class="sr" accept="image/*" multiple tabindex="-1" aria-hidden="true">
+<input type="file" id="impIn" class="sr" accept="application/json,.json" tabindex="-1" aria-hidden="true">
+<button class="fab" id="fab" type="button">Сфотографировать чек</button>
+<div class="scrim" id="sheetWrap" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Чек"></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

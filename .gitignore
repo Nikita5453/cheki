@@ -1,0 +1,4 @@
+.claude/
+.env
+*.json.bak
+cheki-*.json
