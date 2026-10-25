@@ -417,10 +417,10 @@ function detail(r) {
     return `<div class="rc-detail">
       ${photos}${author}${move}
       <p class="hint">${r.status === "pending"
-        ? "Чек скоро распознается. Можно не ждать и заполнить его вручную."
+        ? "Чек ещё не распознан. Нажмите «Распознать сейчас» или заполните его вручную."
         : "Чек не удалось прочитать: " + esc(r.error || "причина неизвестна") + ". Попробуйте ещё раз или заполните вручную."}</p>
       ${editable ? `<div class="row">
-        ${r.status === "error" ? `<button class="btn small" type="button" data-act="retry" data-id="${esc(r.id)}">Распознать ещё раз</button>` : ""}
+        <button class="btn small" type="button" data-act="retry" data-id="${esc(r.id)}">${r.status === "error" ? "Распознать ещё раз" : "Распознать сейчас"}</button>
         <button class="btn small" type="button" data-act="edit" data-id="${esc(r.id)}">Заполнить вручную</button>
         ${delBtns}
       </div>` : readonly}
@@ -525,6 +525,7 @@ function renderAccount() {
     <div class="person-big">${avatar({ name: m.full_name || S.user.email, avatar: m.avatar_url || m.picture }, "ava big")}
       <span class="pname">${esc(m.full_name || "")}<small>${esc(S.user.email || "")}</small></span></div>
     <p class="hint">Сборок: ${S.books.length}. Вы видите только свои сборки и те, куда вас пригласили.</p>
+    <p class="hint"><a href="privacy.html">Политика конфиденциальности</a></p>
     <div class="row"><button class="btn danger" type="button" data-act="sign-out">Выйти из аккаунта</button></div>`;
 }
 
@@ -737,14 +738,31 @@ async function onFiles(e) {
     }
     putLocal(await SB.upsertReceipt({ id, bookId: book.id, status: "pending", date: pendingDate, store: "", total: 0, items: [], photos: paths }));
     S.open = id;
-    notice("");
-    toast((pendingDate === today() ? "Чек в очереди на распознавание" : `Чек в очереди, дата ${fmtD(pendingDate)}. Если на чеке другая дата, она подставится сама`)
-      + ` · ${book.name}`);
+    render();
   } catch (err) {
     SB.deletePhotos(paths).catch(() => {});
     notice(errText(err));
+    S.busy = false; render();
+    return;
   }
+  await recognizeNow(id, book.name);
   S.busy = false; render();
+}
+
+/* Ask the cloud function to read the receipt right away, then show what it found. */
+async function recognizeNow(id, bookName) {
+  notice("Распознаю чек… Обычно это 5–15 секунд.");
+  try {
+    await SB.recognize(id);
+  } catch (err) {
+    console.warn("recognize", err);
+  }
+  try { putLocal(await SB.receipt(id)); } catch {}
+  notice("");
+  const r = S.receipts.find(x => x.id === id);
+  if (r?.status === "done") toast(`Чек распознан: ${r.store || "без названия"}, ${money(r.total)}${bookName ? " · " + bookName : ""}`);
+  else if (r?.status === "error") toast("Чек не удалось прочитать. Откройте его, чтобы повторить или заполнить вручную");
+  else toast("Чек сохранён и ждёт распознавания. Можно заполнить его вручную");
 }
 
 async function saveDraft() {
@@ -827,11 +845,13 @@ document.addEventListener("click", async e => {
       break;
     }
     case "retry":
+      t.disabled = true;
       try {
         putLocal(await SB.patchReceipt(id, { status: "pending", error: null }));
         render();
-        toast("Чек снова в очереди");
-      } catch (err) { toast(errText(err)); }
+        await recognizeNow(id);
+        render();
+      } catch (err) { toast(errText(err)); t.disabled = false; }
       break;
     case "del": S.confirmDel = id; renderList(); break;
     case "del-no": S.confirmDel = null; renderList(); break;

@@ -109,6 +109,39 @@ def auth(pairs):
     print({k: cfg.get(k) for k in body if "secret" not in k})
 
 
+def deploy(name):
+    """Upload supabase/functions/<name>/index.ts as an Edge Function (multipart: metadata + file)."""
+    src = (ROOT / "supabase" / "functions" / name / "index.ts").read_bytes()
+    boundary = "----cheki" + str(abs(hash(src)))
+    meta = json.dumps({"name": name, "entrypoint_path": "index.ts", "verify_jwt": True}).encode()
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\nContent-Type: application/json\r\n\r\n".encode()
+            + meta + f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"index.ts\"\r\n"
+                     f"Content-Type: application/typescript\r\n\r\n".encode()
+            + src + f"\r\n--{boundary}--\r\n".encode())
+    token = read_env().get("SUPABASE_ACCESS_TOKEN", "")
+    req = urllib.request.Request(f"{API}/projects/{project()}/functions/deploy?slug={name}", method="POST", data=body,
+                                 headers={"Authorization": "Bearer " + token, "User-Agent": "cheki-admin",
+                                          "Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            res = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        sys.exit(f"HTTP {e.code} on deploy: {e.read().decode()[:600]}")
+    print({k: res.get(k) for k in ("slug", "status", "version", "verify_jwt")})
+
+
+def secret(pairs):
+    env = read_env()
+    body = []
+    for p in pairs:
+        k, v = p.split("=", 1)
+        body.append({"name": k, "value": env.get(v[1:], "") if v.startswith("@") else v})
+    call("POST", f"/projects/{project()}/secrets", body)
+    names = [s["name"] for s in call("GET", f"/projects/{project()}/secrets")]
+    print("secrets now:", names)
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "info"
-    {"info": lambda: info(), "sql": lambda: sql(sys.argv[2]), "auth": lambda: auth(sys.argv[2:])}[cmd]()
+    {"info": lambda: info(), "sql": lambda: sql(sys.argv[2]), "auth": lambda: auth(sys.argv[2:]),
+     "deploy": lambda: deploy(sys.argv[2]), "secret": lambda: secret(sys.argv[2:])}[cmd]()

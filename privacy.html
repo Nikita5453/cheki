@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Политика конфиденциальности — Бюджет по чекам</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;600&family=Unbounded:wght@500;700&display=swap">
+<link rel="stylesheet" href="style.css?v=17">
+<style>
+  .doc { max-width: 720px; margin: 0 auto; background: var(--paper); border-radius: 16px; box-shadow: var(--shadow); padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+  .doc h1 { font-size: clamp(22px, 4vw, 28px); }
+  .doc h2 { color: var(--ink); font-size: 14px; margin-top: 8px; }
+  .doc p, .doc li { max-width: 65ch; margin: 0; }
+  .doc ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+  .doc a { color: var(--accent); }
+</style>
+</head>
+<body>
+<article class="doc">
+  <a href="./">← Бюджет по чекам</a>
+  <h1>Политика конфиденциальности</h1>
+  <p class="hint">Действует с 26 октября 2026 года.</p>
+
+  <p>«Бюджет по чекам» (<a href="https://nikita5453.github.io/cheki/">nikita5453.github.io/cheki</a>) — сайт для учёта расходов по кассовым чекам. Здесь написано, какие данные он собирает, где они хранятся и кто их видит.</p>
+
+  <h2>Какие данные мы получаем</h2>
+  <ul>
+    <li><b>Из Google при входе:</b> ваше имя, адрес почты и фото профиля. Пароль от Google сайт не видит и не получает.</li>
+    <li><b>То, что вы добавляете сами:</b> сборки чеков и их настройки, чеки (дата, магазин, позиции, суммы), фото чеков.</li>
+    <li><b>Кто в какой сборке состоит</b> и кто добавил какой чек.</li>
+  </ul>
+
+  <h2>Где хранятся данные</h2>
+  <p>Данные и фото хранятся в сервисе Supabase (дата-центр в Ирландии, ЕС). Фото лежат в закрытом хранилище: открыть их могут только участники сборки, к которой относится чек.</p>
+
+  <h2>Распознавание фото чеков</h2>
+  <p>Чтобы прочитать позиции и суммы, фото чека отправляется в сервис Google Gemini API. Сайт использует бесплатный тариф Gemini. По условиям Google на этом тарифе присланные данные могут использоваться для улучшения продуктов Google и просматриваться людьми. Не фотографируйте вместе с чеком документы, банковские карты и другие личные данные. Если не хотите отправлять фото в Google, вводите чеки вручную: тогда они остаются только в нашем хранилище.</p>
+
+  <h2>Кто видит ваши данные</h2>
+  <ul>
+    <li>Участники сборки видят её чеки и фото, а также имена, почты и фото профиля друг друга.</li>
+    <li>Люди, не состоящие в сборке, её не видят.</li>
+    <li>Мы не продаём данные, не показываем рекламу и не передаём данные третьим лицам, кроме сервисов, без которых сайт не работает: Supabase (хранение), Google (вход и распознавание), GitHub Pages (хостинг страниц) и Google Fonts (шрифты).</li>
+  </ul>
+
+  <h2>Как удалить данные</h2>
+  <ul>
+    <li>Чек можно удалить кнопкой «Удалить» у чека, сборку целиком — в её настройках (если вы владелец), из чужой сборки можно выйти.</li>
+    <li>Чтобы удалить аккаунт и все связанные с ним данные, напишите на <a href="mailto:{{EMAIL}}">{{EMAIL}}</a>. Удалим в течение 30 дней.</li>
+  </ul>
+
+  <h2>Контакты</h2>
+  <p>Вопросы о данных: <a href="mailto:{{EMAIL}}">{{EMAIL}}</a>.</p>
+</article>
+</body>
+</html>

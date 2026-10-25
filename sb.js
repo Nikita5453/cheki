@@ -80,6 +80,14 @@ const SB = (() => {
       return fromDb(await q(client.from("receipts").update(row).eq("id", id).select().single()));
     },
     deleteReceipt: id => q(client.from("receipts").delete().eq("id", id)),
+    async receipt(id) { return fromDb(await q(client.from("receipts").select("*").eq("id", id).single())); },
+
+    /* Cloud recognition (Edge Function «recognize», Gemini). Resolves with {status, error?}. */
+    async recognize(id) {
+      const { data, error } = await client.functions.invoke("recognize", { body: { id } });
+      if (error) { const e = new Error(error.message || "recognize failed"); e.status = error.context?.status; throw e; }
+      return data || {};
+    },
 
     /* ---------- photos (private bucket, path «<uploader id>/<file>») ---------- */
     putPhoto: (path, blob) => q(client.storage.from("photos").upload(path, blob, { contentType: "image/jpeg", upsert: true })),
