@@ -230,7 +230,7 @@ function avatar(p, cls = "ava") {
 
 function renderMe() {
   const m = S.user.user_metadata || {};
-  $("meBtn").innerHTML = `${avatar({ name: m.full_name || S.user.email, avatar: m.avatar_url })}<span>${esc((m.full_name || S.user.email || "").split(" ")[0])}</span>`;
+  $("meBtn").innerHTML = `${avatar({ name: m.full_name || S.user.email, avatar: m.avatar_url || m.picture })}<span>${esc((m.full_name || S.user.email || "").split(" ")[0])}</span>`;
 }
 
 function renderBooks() {
@@ -522,7 +522,7 @@ function renderAccount() {
   const m = S.user.user_metadata || {};
   $("sheet").innerHTML = `
     <header class="sh-head"><h2>Аккаунт</h2><button class="x" type="button" data-act="close" aria-label="Закрыть">×</button></header>
-    <div class="person-big">${avatar({ name: m.full_name || S.user.email, avatar: m.avatar_url }, "ava big")}
+    <div class="person-big">${avatar({ name: m.full_name || S.user.email, avatar: m.avatar_url || m.picture }, "ava big")}
       <span class="pname">${esc(m.full_name || "")}<small>${esc(S.user.email || "")}</small></span></div>
     <p class="hint">Сборок: ${S.books.length}. Вы видите только свои сборки и те, куда вас пригласили.</p>
     <div class="row"><button class="btn danger" type="button" data-act="sign-out">Выйти из аккаунта</button></div>`;

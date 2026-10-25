@@ -28,7 +28,9 @@ const SB = (() => {
 
     /* ---------- auth ---------- */
     async session() { return (await client.auth.getSession()).data.session; },
-    onAuth(fn) { client.auth.onAuthStateChange((_event, session) => fn(session)); },
+    /* The callback runs while supabase-js holds its auth lock; any query made inside it waits for that lock forever.
+       Hand the session over on the next tick so the app's own queries run after the lock is released. */
+    onAuth(fn) { client.auth.onAuthStateChange((_event, session) => { setTimeout(() => fn(session), 0); }); },
     signIn() {
       return client.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin + location.pathname } });
     },
