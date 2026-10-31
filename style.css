@@ -261,7 +261,8 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
 .period { margin: -6px 0 0; font: 600 15px var(--f-body); }
 .lines dd.pos { color: var(--good); }
 .lines dd.neg { color: var(--bad); }
-.fab:disabled { opacity: .5; cursor: default; }
+.btn.off, .fab.off { opacity: .55; }
+.fab { align-items: center; -webkit-tap-highlight-color: transparent; }
 .slip .hint { font-family: var(--f-body); font-size: 14px; }
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 30;

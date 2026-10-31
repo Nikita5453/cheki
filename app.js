@@ -217,7 +217,8 @@ function render() {
   renderList();
   document.querySelectorAll("[data-scope]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.scope === S.scope)));
   const ok = S.state === "ready" && !S.busy && !!curBook();
-  for (const id of ["camBtn", "galBtn", "manualBtn", "fab"]) $(id).disabled = !ok;
+  $("manualBtn").disabled = !ok;
+  for (const id of ["camBtn", "galBtn", "fab"]) $(id).classList.toggle("off", !ok);
   schedulePoll();
 }
 
@@ -708,17 +709,26 @@ function updateSums() {
 }
 
 /* ---------- photos in, receipts out ---------- */
-async function shrink(file) {
-  try {
-    const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
-    const k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
-    const cv = document.createElement("canvas");
-    cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
-    cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
-    bmp.close?.();
-    const blob = await new Promise(r => cv.toBlob(r, "image/jpeg", 0.85));
-    return blob || file;
-  } catch { return file; }
+/* Scales a photo down to JPEG. Goes through <img>, which applies EXIF rotation and lets Safari decode HEIC too.
+   Any failure or a stuck decode falls back to the original file, so a photo is never lost here. */
+function shrink(file) {
+  const work = new Promise(resolve => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    const done = v => { URL.revokeObjectURL(url); resolve(v); };
+    img.onerror = () => done(file);
+    img.onload = () => {
+      try {
+        const k = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+        const cv = document.createElement("canvas");
+        cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        cv.toBlob(b => done(b || file), "image/jpeg", 0.85);
+      } catch { done(file); }
+    };
+    img.src = url;
+  });
+  return Promise.race([work, new Promise(r => setTimeout(() => r(file), 20000))]);
 }
 
 async function onFiles(e) {
@@ -728,12 +738,14 @@ async function onFiles(e) {
   if (list.length > MAX_IMAGES) toast(`Взяты первые ${MAX_IMAGES} фото`);
   S.busy = true; render();
   notice("Отправляю фото чека…");
+  toast("Фото получено, отправляю…");
   const id = uid(), paths = [], pendingDate = defaultDate(), book = curBook();
   try {
-    const files = await Promise.all(list.slice(0, MAX_IMAGES).map(shrink));
-    for (let i = 0; i < files.length; i++) {
+    /* One photo at a time: phones run out of memory decoding several large photos at once. */
+    const chosen = list.slice(0, MAX_IMAGES);
+    for (let i = 0; i < chosen.length; i++) {
       const path = `${myId()}/${id}-${i + 1}.jpg`;
-      await SB.putPhoto(path, files[i]);
+      await SB.putPhoto(path, await shrink(chosen[i]));
       paths.push(path);
     }
     putLocal(await SB.upsertReceipt({ id, bookId: book.id, status: "pending", date: pendingDate, store: "", total: 0, items: [], photos: paths }));
@@ -976,8 +988,19 @@ document.addEventListener("submit", async e => {
   } catch (err) { toast(errText(err)); btn.disabled = false; }
 });
 
-$("camBtn").onclick = $("fab").onclick = () => $("camIn").click();
-$("galBtn").onclick = () => $("galIn").click();
+/* The photo buttons are real <label>s, which is what reliably opens the picker on iPhone.
+   Safari's own menu (take photo, library, files) is steadier there than jumping straight into the camera. */
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+if (isIOS) $("camIn").removeAttribute("capture");
+for (const id of ["camBtn", "galBtn", "fab"]) {
+  const el = $(id);
+  el.addEventListener("click", e => {
+    if (S.state === "ready" && !S.busy && curBook()) return;
+    e.preventDefault();
+    toast(S.busy ? "Подождите, предыдущий чек ещё обрабатывается" : !curBook() && S.state === "ready" ? "Сначала создайте сборку" : "Подождите, данные ещё загружаются");
+  });
+  el.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); } });
+}
 $("camIn").onchange = onFiles;
 $("galIn").onchange = onFiles;
 $("manualBtn").onclick = () => openDraft(simpleDraft({ id: uid(), bookId: S.bookId, date: defaultDate(), photos: [], isNew: true }, []));
