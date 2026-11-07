@@ -3,3 +3,4 @@
 data/
 worker/*.log
 __pycache__/
+monobank/keys/
