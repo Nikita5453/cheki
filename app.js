@@ -517,7 +517,7 @@ function detail(r, hit) {
     <div class="items"><table>
       <thead><tr><th>Позиция</th><th>Вид затрат</th><th>Вид продукта</th><th class="num">Сумма</th></tr></thead>
       <tbody>
-        ${items.map((i, n) => `<tr${hl(n)}><td>${esc(i.name)}</td><td class="sub2">${esc(i.category)}</td><td class="sub2">${esc(i.type || "—")}</td><td class="num">${money(i.price)}</td></tr>`).join("")}
+        ${items.map((i, n) => `<tr${hl(n)}><td>${esc(i.name)}</td><td class="sub2">${esc(i.category)}</td><td class="sub2${String(i.type || "").trim() ? "" : " no-type"}">${esc(i.type || "—")}</td><td class="num">${money(i.price)}</td></tr>`).join("")}
         ${Math.abs(diff) >= 0.01 ? `<tr${hl(-1)}><td class="sub2" colspan="3">${NO_SPLIT} (разница с итогом)</td><td class="num">${money(diff)}</td></tr>` : ""}
         ${items.length > 1 || Math.abs(diff) >= 0.01 ? `<tr><td colspan="3"><strong>Итого</strong></td><td class="num"><strong>${money(r.total)}</strong></td></tr>` : ""}
       </tbody>

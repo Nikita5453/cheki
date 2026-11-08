@@ -350,3 +350,18 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
 .items tr.hit td.sub2 { color: var(--ink); }
 
 #listPanel { scroll-margin-top: 16px; }
+/* CHK-4: receipt items on a phone, each in two lines: name and sum, then «вид затрат · вид продукта» */
+@media (max-width: 720px) {
+  .rc-detail .items table, .rc-detail .items tbody { display: block; }
+  .rc-detail .items thead { display: none; }
+  .rc-detail .items tr { display: flex; flex-wrap: wrap; align-items: baseline; padding: 7px 8px; border-bottom: 1px dotted var(--line); }
+  .rc-detail .items tr::after { content: ""; flex-basis: 100%; order: 3; }
+  .rc-detail .items td { padding: 0; border: 0; }
+  .rc-detail .items td:first-child { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; }
+  .rc-detail .items td.num { order: 2; padding-left: 12px; }
+  .rc-detail .items td.sub2:not([colspan]) { order: 4; min-width: 0; margin-top: 2px; overflow-wrap: anywhere; }
+  .rc-detail .items td.sub2:not([colspan]) + td.sub2::before { content: "·"; padding: 0 6px; }
+  .rc-detail .items td.no-type { display: none; }
+  .rc-detail .items tr.hit { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+  .rc-detail .items tr.hit td { background: none; box-shadow: none; }
+}
