@@ -8,12 +8,13 @@ const FOOD = ["Молочное", "Яйца", "Мясо и птица", "Рыб�
   "Алкоголь", "Готовая еда", "Замороженное"];
 const CUR = "₴";
 const NO_SPLIT = "Без разбивки";
+const REST = "Остальное";
 const MAX_IMAGES = 4;
 
 const S = {
   user: null, books: [], bookId: null, receipts: [],
   state: "auth", // auth | loading | ready | error
-  open: null, confirmDel: null, draft: null, sheet: null, busy: false, view: null, scope: "month"
+  open: null, confirmDel: null, draft: null, sheet: null, busy: false, view: null, scope: "month", filter: null
 };
 
 /* ---------- helpers ---------- */
@@ -97,7 +98,7 @@ function putLocal(rec) {
 function selectBook(id) {
   if (!S.books.some(b => b.id === id)) return;
   S.bookId = id; lsSet("book", id);
-  S.view = null; S.open = null; S.confirmDel = null; S.receipts = [];
+  S.view = null; S.open = null; S.confirmDel = null; S.receipts = []; S.filter = null;
   render();
   refresh(true);
 }
@@ -171,6 +172,22 @@ function defaultDate() {
   return sel && sel !== ps[ps.length - 1] ? lastDay(sel) : today();
 }
 
+/* What a receipt adds to the breakdown rows: one part per item (i = its index) and, when the total differs from
+   the items, one part for the gap (i = -1). The breakdowns, the category filter and its highlight all use this. */
+function parts(r) {
+  const out = [];
+  let sum = 0;
+  (r.items || []).forEach((it, i) => {
+    const v = +it.price || 0;
+    sum += v;
+    const cat = EXP.includes(it.category) ? it.category : "Другое";
+    out.push({ i, v, cat, typ: String(it.type || "").trim() || cat });
+  });
+  const diff = r2((+r.total || 0) - sum);
+  if (Math.abs(diff) >= 0.01) out.push({ i: -1, v: diff, cat: NO_SPLIT, typ: NO_SPLIT });
+  return out;
+}
+
 function stats() {
   const ps = periods();
   const cur = ps[ps.length - 1] || null;
@@ -181,26 +198,66 @@ function stats() {
     : sel.rs;
   const cat = new Map(), typ = new Map();
   const add = (m, k, v) => m.set(k, (m.get(k) || 0) + v);
-  for (const r of rs) {
-    const total = +r.total || 0;
-    let sum = 0;
-    for (const it of r.items || []) {
-      const p = +it.price || 0;
-      sum += p;
-      const c = EXP.includes(it.category) ? it.category : "Другое";
-      add(cat, c, p);
-      add(typ, String(it.type || "").trim() || c, p);
-    }
-    const diff = r2(total - sum);
-    if (Math.abs(diff) >= 0.01) { add(cat, NO_SPLIT, diff); add(typ, NO_SPLIT, diff); }
-  }
+  for (const r of rs) for (const p of parts(r)) { add(cat, p.cat, p.v); add(typ, p.typ, p.v); }
   const sorted = m => [...m].filter(e => Math.abs(e[1]) >= 0.005).sort((a, b) => b[1] - a[1]);
-  let types = sorted(typ);
+  let types = sorted(typ), rest = new Set();
   if (types.length > 14) {
-    const rest = types.slice(13).reduce((s, e) => s + e[1], 0);
-    types = [...types.slice(0, 13), ["Остальное", rest]];
+    rest = new Set(types.slice(13).map(e => e[0]));
+    types = [...types.slice(0, 13), [REST, types.slice(13).reduce((s, e) => s + e[1], 0)]];
   }
-  return { ps, cur, sel, isCurrent: sel === cur, cat: sorted(cat), typ: types };
+  return { ps, cur, sel, isCurrent: sel === cur, rs, cat: sorted(cat), typ: types, rest };
+}
+
+/* ---------- category filter: S.filter = { dim: "cat" | "typ", key, book } ---------- */
+/* Does this part of a receipt belong to the filtered breakdown row? «Остальное» stands for the folded-in kinds. */
+function partHit(p, f, st) {
+  return f.dim === "typ" && f.key === REST && st.rest.size ? st.rest.has(p.typ) : p[f.dim] === f.key;
+}
+/* The breakdown row the filter points at in this period ([key, sum]), or undefined when it has none. */
+const filterRow = (f, st) => st[f.dim].find(e => e[0] === f.key);
+const receiptWord = n => n % 10 === 1 && n % 100 !== 11 ? "чек" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "чека" : "чеков";
+
+/* The filter drops itself when its row disappears after the data changed (a receipt added, edited, moved or deleted)
+   but stays while the user switches months or the scope, and through polls that change nothing. */
+function checkFilter(st) {
+  const f = S.filter;
+  if (!f) return;
+  if (f.book !== S.bookId) { S.filter = null; return; }
+  const where = S.scope + "|" + (st.sel ? st.sel.k : "");
+  const has = !!filterRow(f, st);
+  if (!has && f.had && f.where === where) { S.filter = null; return; }
+  f.had = has; f.where = where;
+}
+
+function renderFilter(f, st, shown) {
+  const el = $("filter");
+  let html = "";
+  if (f) {
+    const row = filterRow(f, st);
+    const note = f.key === NO_SPLIT ? "Чеки, где итог не совпадает с суммой позиций"
+      : f.dim === "typ" && f.key === REST ? "Виды продуктов, которые не поместились в разбивку отдельной строкой" : "";
+    html = `<div class="ff-text">
+      <span class="ff-kind">${f.dim === "cat" ? "Вид затрат" : "Вид продукта"}</span>
+      <span class="ff-main">
+        <strong class="ff-name">${esc(f.key)}</strong>
+        <span class="ff-meta">${row && shown ? `<span class="num">${money(row[1])}</span> · ${shown} ${receiptWord(shown)}` : "нет чеков"}</span>
+      </span>
+      ${note ? `<span class="ff-note">${note}</span>` : ""}
+    </div>
+    <button class="x" type="button" data-act="filter-clear" aria-label="Сбросить фильтр «${esc(f.key)}»">×</button>`;
+  }
+  /* Rewrite only on change, so the polite live region is not read out again on every poll. */
+  if (filterHtml !== html) { el.innerHTML = filterHtml = html; }
+  el.hidden = !f;
+}
+let filterHtml = "";
+
+/* After a row is pressed: bring the filter label into view if it is not fully visible. */
+function showFilter() {
+  const r = $("filter").getBoundingClientRect();
+  if (r.top >= 0 && r.bottom <= innerHeight) return;
+  const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  $("listPanel").scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" });
 }
 
 /* ---------- render ---------- */
@@ -211,12 +268,13 @@ function render() {
   $("fab").hidden = !signedIn;
   if (!signedIn) return;
   const st = stats();
+  checkFilter(st);
   renderMe();
   renderBooks();
   renderBudget(st);
-  $("byCat").innerHTML = bars(st.cat);
-  $("byType").innerHTML = bars(st.typ);
-  renderList();
+  $("byCat").innerHTML = bars(st.cat, "cat");
+  $("byType").innerHTML = bars(st.typ, "typ");
+  renderList(st);
   document.querySelectorAll("[data-scope]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.scope === S.scope)));
   const ok = S.state === "ready" && !S.busy && !!curBook();
   $("manualBtn").disabled = !ok;
@@ -349,29 +407,47 @@ function periodLabel(p) {
 }
 const signed = v => (v > 0 ? "+" : v < 0 ? "−" : "") + money(Math.abs(v));
 
-function bars(entries) {
+/* A breakdown; every row is a button that filters the receipt list by it. */
+function bars(entries, dim) {
   if (!entries.length) return `<p class="empty">Появится после первого чека.</p>`;
   const max = Math.max(...entries.map(e => Math.abs(e[1])));
   const tot = entries.reduce((s, e) => s + e[1], 0);
-  return `<ol class="bars">${entries.map(([k, v]) => `
+  const f = S.filter;
+  return `<ol class="bars pick">${entries.map(([k, v]) => `
     <li class="${v < 0 ? "neg" : ""}">
-      <div class="bl"><span>${esc(k)}</span><span class="num">${money(v)} <em>${tot > 0 ? Math.round(v / tot * 100) : 0}%</em></span></div>
-      <div class="bt"><i style="width:${max > 0 ? Math.max(1.5, Math.abs(v) / max * 100) : 0}%"></i></div>
+      <button class="bar" type="button" data-act="filter" data-dim="${dim}" data-key="${esc(k)}" aria-pressed="${!!f && f.dim === dim && f.key === k}" aria-controls="list">
+        <span class="bl"><span>${esc(k)}</span><span class="num">${money(v)} <em>${tot > 0 ? Math.round(v / tot * 100) : 0}%</em></span></span>
+        <span class="bt"><i style="width:${max > 0 ? Math.max(1.5, Math.abs(v) / max * 100) : 0}%"></i></span>
+      </button>
     </li>`).join("")}</ol>`;
 }
 
-function renderList() {
+function renderList(st = stats()) {
   const el = $("list");
-  const sel = selected(periods());
+  const sel = st.sel;
   const byMonth = S.scope !== "all" && sel;
   const all = receipts();
   const shared = (curBook()?.members.length || 0) > 1;
   /* Receipts still waiting or failed are shown in every month so they are not lost from sight. */
   const list = byMonth ? all.filter(r => !isDone(r) || ((r.date || "") >= sel.from && (r.date || "") < sel.to)) : all;
+  /* With a filter: exactly the receipts the breakdown counted in that row, so the label sum matches the row. */
+  const f = S.state === "ready" && S.filter;
+  const hits = r => new Set(parts(r).filter(p => partHit(p, f, st)).map(p => p.i));
+  const inRow = new Set(f && filterRow(f, st) ? st.rs.filter(r => hits(r).size) : []);
+  const shown = f ? all.filter(r => inRow.has(r)) : list;
   const waiting = list.filter(r => r.status === "pending").length;
-  $("rcount").textContent = curBook() ? (byMonth ? periodLabel(sel) + " · " : "") + `${list.length} шт.${waiting ? ` · ждут распознавания: ${waiting}` : ""}` : "";
+  $("rcount").textContent = curBook() ? (byMonth ? periodLabel(sel) + " · " : "")
+    + (f ? `${shown.length} из ${list.length} шт.` : `${list.length} шт.${waiting ? ` · ждут распознавания: ${waiting}` : ""}`) : "";
+  renderFilter(f, st, shown.length);
   if (S.state !== "ready") { el.innerHTML = `<p class="empty">${S.state === "error" ? "Чеки не загрузились." : "Загружаю чеки…"}</p>`; return; }
   if (!curBook()) { el.innerHTML = `<p class="empty">Чеки появятся, когда вы создадите сборку.</p>`; return; }
+  if (f && !shown.length) {
+    el.innerHTML = `<div class="empty-state">
+      <strong>${byMonth ? "В этом месяце нет" : "Нет"} чеков с «${esc(f.key)}»</strong>
+      <div><button class="btn small" type="button" data-act="filter-clear">Показать все чеки</button></div>
+    </div>`;
+    return;
+  }
   if (all.length && !list.length) {
     el.innerHTML = `<p class="empty">В этом месяце чеков нет. Добавьте чек: он попадёт в этот месяц.</p>`;
     return;
@@ -384,7 +460,7 @@ function renderList() {
     return;
   }
   const start = curBook()?.startDate;
-  el.innerHTML = list.map(r => {
+  el.innerHTML = shown.map(r => {
     const open = S.open === r.id;
     const before = isDone(r) && start && (r.date || "") < start;
     const tag = r.status === "pending" ? '<span class="tag wait">ждёт распознавания</span>'
@@ -401,14 +477,16 @@ function renderList() {
         <span class="rc-n">${isDone(r) ? (r.items || []).length + " поз." : ""}</span>
         <span class="rc-total num">${isDone(r) ? money(r.total) : "—"}</span>
       </button>
-      ${open ? detail(r) : ""}
+      ${open ? detail(r, f ? hits(r) : null) : ""}
     </article>`;
   }).join("");
   fillPhotos(el);
 }
 
-function detail(r) {
+/* hit: indexes of the item rows that match the category filter (-1 is the «Без разбивки» gap row), or null. */
+function detail(r, hit) {
   const sure = S.confirmDel === r.id;
+  const hl = i => hit?.has(i) ? ' class="hit"' : "";
   const editable = canEdit(r);
   const photos = (r.photos || []).length ? `<div class="photos">${r.photos.map(p => `<img data-photo="${esc(p)}" data-act="zoom" alt="Фото чека">`).join("")}</div>` : "";
   const delBtns = editable ? `
@@ -439,8 +517,8 @@ function detail(r) {
     <div class="items"><table>
       <thead><tr><th>Позиция</th><th>Вид затрат</th><th>Вид продукта</th><th class="num">Сумма</th></tr></thead>
       <tbody>
-        ${items.map(i => `<tr><td>${esc(i.name)}</td><td class="sub2">${esc(i.category)}</td><td class="sub2">${esc(i.type || "—")}</td><td class="num">${money(i.price)}</td></tr>`).join("")}
-        ${Math.abs(diff) >= 0.01 ? `<tr><td class="sub2" colspan="3">${NO_SPLIT} (разница с итогом)</td><td class="num">${money(diff)}</td></tr>` : ""}
+        ${items.map((i, n) => `<tr${hl(n)}><td>${esc(i.name)}</td><td class="sub2">${esc(i.category)}</td><td class="sub2">${esc(i.type || "—")}</td><td class="num">${money(i.price)}</td></tr>`).join("")}
+        ${Math.abs(diff) >= 0.01 ? `<tr${hl(-1)}><td class="sub2" colspan="3">${NO_SPLIT} (разница с итогом)</td><td class="num">${money(diff)}</td></tr>` : ""}
         ${items.length > 1 || Math.abs(diff) >= 0.01 ? `<tr><td colspan="3"><strong>Итого</strong></td><td class="num"><strong>${money(r.total)}</strong></td></tr>` : ""}
       </tbody>
     </table></div>
@@ -838,6 +916,18 @@ document.addEventListener("click", async e => {
       break;
     }
     case "scope": S.scope = t.dataset.scope === "all" ? "all" : "month"; lsSet("scope", S.scope); render(); break;
+    case "filter": {
+      const { dim, key } = t.dataset, f = S.filter;
+      const off = !!f && f.dim === dim && f.key === key;
+      const focused = document.activeElement === t;
+      S.filter = off ? null : { dim, key, book: S.bookId };
+      render();
+      /* The breakdowns were redrawn: keep the keyboard on the row that was pressed. */
+      if (focused) [...document.querySelectorAll(".bar")].find(b => b.dataset.dim === dim && b.dataset.key === key)?.focus();
+      if (!off) showFilter();
+      break;
+    }
+    case "filter-clear": S.filter = null; render(); $("listTitle").focus(); break;
     case "move": {
       const target = S.books.find(b => b.id === t.dataset.book);
       const r = S.receipts.find(x => x.id === id);
@@ -1032,7 +1122,7 @@ $("googleBtn").onclick = async () => {
 async function onSession(session) {
   const was = S.user?.id;
   S.user = session?.user || null;
-  if (!S.user) { S.books = []; S.receipts = []; S.bookId = null; S.state = "auth"; render(); return; }
+  if (!S.user) { S.books = []; S.receipts = []; S.bookId = null; S.filter = null; S.state = "auth"; render(); return; }
   if (was === S.user.id && (S.state === "ready" || S.state === "loading")) return;
   S.state = "loading"; render();
   const join = lsGet("pendingJoin", "");
