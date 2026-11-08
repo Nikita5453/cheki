@@ -5,7 +5,10 @@ private `photos` storage, Edge Function `recognize` that reads receipts with Gem
 
 ## Agent team
 
-This repo is worked on by the agent team (rules: `~/.claude/team/PIPELINE.md`). Board project: `cheki`, task prefix `CHK`.
+This repo is worked on by the agent team (rules: `~/.claude/team/PIPELINE.md`). Task prefix `CHK`:
+board cards are issues in this repo titled `CHK-N: …`, tracked on the shared GitHub Project «Команда»
+(https://github.com/users/Nikita5453/projects/2). Every PR body starts with `Closes #<issue>`.
+Site: https://nikita5453.github.io/cheki/.
 
 - **Run locally:** `python -m http.server 8765` in the repo root, open http://localhost:8765/.
   In a worktree use another port (8766, 8767, …) so it does not clash with the owner's server.
