@@ -11,11 +11,14 @@ board cards are issues in this repo titled `CHK-N: …`, tracked on the shared G
 Site: https://nikita5453.github.io/cheki/.
 
 - **Run locally:** `python -m http.server 8765` in the repo root, open http://localhost:8765/.
-  In a worktree use another port (8766, 8767, …) so it does not clash with the owner's server.
+  Port 8765 is the owner's. In a worktree use one of 8766–8769 (only these are in the Supabase Redirect URLs, so sign-in works there).
   `.claude/` is gitignored, so a worktree has no `launch.json`: create `.claude/launch.json` there with your port if you need the preview tools.
 - **Sign-in:** almost everything is behind Google sign-in. Agents never sign in through Google themselves.
   Test the signed-out screens and the code paths you can; for signed-in flows ask the owner (via Coordinator) to sign in once
-  in the browser pane at your localhost port — the Supabase session then stays in that origin's storage. Otherwise report the flow as not verified.
+  in the browser pane at **your** port (8766–8769) — the Supabase session then stays in that origin's storage. Otherwise report the flow as not verified.
+  While signed in, follow "Проверка со входом владельца" in PIPELINE.md: never read, print or write the Supabase keys/session
+  (`sb-*` entries in localStorage) directly; deleting receipts or books and bulk statement imports only in a separate test book
+  and only with the owner's OK, then «Выйти»; never open books shared with other people; no screenshots or texts with real data in issues/PRs.
 - **Main flows to regression-test:** sign-in screen renders and links to `privacy.html`; after sign-in the books bar, budget card,
   breakdowns and receipt list render; add a receipt manually; upload a photo (recognition runs in the Edge Function); import a bank statement (CSV/Excel); invite link.
 - **File format:** `app.js` and `style.css` use **CRLF** line endings, every other text file uses LF — keep them as they are.
