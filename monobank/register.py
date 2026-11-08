@@ -80,7 +80,8 @@ def signed_headers(path: str) -> dict:
 
 def pubkey_b64() -> str:
     with open(PUB, "rb") as f:
-        return base64.b64encode(f.read()).decode()
+        # openssl под Windows пишет CRLF, а банк в примере ждёт PEM с LF.
+        return base64.b64encode(f.read().replace(b"\r\n", b"\n")).decode()
 
 
 def build_application() -> dict:

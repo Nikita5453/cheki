@@ -31,6 +31,8 @@ const isoD = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const blankItem = () => ({ name: "", price: "", category: "Продукты", type: "" });
 const isDone = r => !r.status || r.status === "done";
+/* Траты из банковской выписки (import.js) хранятся как чеки с id «bank-…». */
+const isBank = r => String(r?.id || "").startsWith("bank-");
 
 const curBook = () => S.books.find(b => b.id === S.bookId) || null;
 const myId = () => S.user?.id;
@@ -218,6 +220,7 @@ function render() {
   document.querySelectorAll("[data-scope]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.scope === S.scope)));
   const ok = S.state === "ready" && !S.busy && !!curBook();
   $("manualBtn").disabled = !ok;
+  $("importBtn").disabled = !ok;
   for (const id of ["camBtn", "galBtn", "fab"]) $(id).classList.toggle("off", !ok);
   schedulePoll();
 }
@@ -386,7 +389,8 @@ function renderList() {
     const before = isDone(r) && start && (r.date || "") < start;
     const tag = r.status === "pending" ? '<span class="tag wait">ждёт распознавания</span>'
       : r.status === "error" ? '<span class="tag err">не распознан</span>'
-      : before ? '<span class="tag">до старта</span>' : "";
+      : before ? '<span class="tag">до старта</span>'
+      : isBank(r) ? '<span class="tag">из банка</span>' : "";
     const kinds = [...new Set((r.items || []).map(i => i.type || i.name).filter(Boolean))];
     const title = !isDone(r) ? "Новый чек"
       : r.store || (kinds.length ? kinds.slice(0, 3).join(", ") + (kinds.length > 3 ? "…" : "") : "Без названия");
@@ -440,6 +444,7 @@ function detail(r) {
         ${items.length > 1 || Math.abs(diff) >= 0.01 ? `<tr><td colspan="3"><strong>Итого</strong></td><td class="num"><strong>${money(r.total)}</strong></td></tr>` : ""}
       </tbody>
     </table></div>
+    ${isBank(r) ? `<p class="hint">Добавлено из выписки банка.${editable ? " Нажмите «Изменить», чтобы поправить название или разложить сумму по позициям." : ""}</p>` : ""}
     ${author}${move}
     ${editable ? `<div class="row">
       <button class="btn small" type="button" data-act="edit" data-id="${esc(r.id)}">Изменить</button>
@@ -453,11 +458,11 @@ function openSheet(kind) {
   S.sheet = kind;
   $("sheetWrap").hidden = false;
   document.body.classList.add("lock");
-  ({ account: renderAccount, book: renderBookSheet, "new-book": renderNewBook }[kind] || renderSheet)();
+  ({ account: renderAccount, book: renderBookSheet, "new-book": renderNewBook, import: renderImport }[kind] || renderSheet)();
 }
 function openDraft(d) { S.draft = d; openSheet("receipt"); }
 function closeSheet() {
-  S.draft = null; S.sheet = null; S.invite = null; S.confirmBook = null;
+  S.draft = null; S.sheet = null; S.invite = null; S.confirmBook = null; S.imp = null;
   $("sheetWrap").hidden = true;
   document.body.classList.remove("lock");
 }
@@ -635,11 +640,13 @@ function updatePickSum() {
 
 async function storeReceipt(d, rec, retry) {
   try {
-    putLocal(await SB.upsertReceipt(rec));
+    const saved = await SB.upsertReceipt(rec);
+    putLocal(saved);
+    const twin = await replaceBankTwin(saved);
     S.open = rec.id;
     closeSheet();
     render();
-    toast("Чек сохранён");
+    toast("Чек сохранён" + twinNote(twin));
   } catch (e) {
     d.msg = errText(e);
     retry();
@@ -772,7 +779,8 @@ async function recognizeNow(id, bookName) {
   try { putLocal(await SB.receipt(id)); } catch {}
   notice("");
   const r = S.receipts.find(x => x.id === id);
-  if (r?.status === "done") toast(`Чек распознан: ${r.store || "без названия"}, ${money(r.total)}${bookName ? " · " + bookName : ""}`);
+  const twin = r?.status === "done" ? await replaceBankTwin(r) : null;
+  if (r?.status === "done") toast(`Чек распознан: ${r.store || "без названия"}, ${money(r.total)}${bookName ? " · " + bookName : ""}${twinNote(twin)}`);
   else if (r?.status === "error") toast("Чек не удалось прочитать. Откройте его, чтобы повторить или заполнить вручную");
   else toast("Чек сохранён и ждёт распознавания. Можно заполнить его вручную");
 }

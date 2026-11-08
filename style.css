@@ -290,3 +290,28 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
   .sheet { padding: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+
+/* Импорт банковской выписки */
+.impmap summary { cursor: pointer; font: 500 13px var(--f-body); color: var(--accent); }
+.impgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 10px; }
+.imptable { max-height: 52vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.imptable thead th { position: sticky; top: 0; background: var(--paper); z-index: 1; }
+.imptable select { padding: 5px 6px; font-size: 13px; max-width: 170px; }
+.imptable input[type="checkbox"] { width: 18px; height: 18px; padding: 0; accent-color: var(--accent); }
+.imptable tr.dim td { opacity: .5; }
+.nowrap { white-space: nowrap; }
+.imptable .c-date .t { display: block; }
+@media (max-width: 720px) {
+  .imptable thead { display: none; }
+  .imptable table, .imptable tbody { display: block; }
+  .imptable tr { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; grid-template-areas: "chk desc sum" "chk date cat"; gap: 4px 10px; align-items: center; padding: 10px; border-bottom: 1px dotted var(--line); }
+  .imptable td { display: block; padding: 0; border: 0; }
+  .imptable .c-chk { grid-area: chk; align-self: start; }
+  .imptable .c-desc { grid-area: desc; }
+  .imptable .c-sum { grid-area: sum; align-self: start; }
+  .imptable .c-date { grid-area: date; }
+  .imptable .c-date .t { display: inline; }
+  .imptable .c-date { white-space: normal; }
+  .imptable .c-cat { grid-area: cat; }
+  .imptable .c-cat select { max-width: 160px; }
+}

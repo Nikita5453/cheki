@@ -73,6 +73,8 @@ const SB = (() => {
       return (await q(client.from("receipts").select("*").eq("book_id", bookId).order("date", { ascending: false }))).map(fromDb);
     },
     async upsertReceipt(r) { return fromDb(await q(client.from("receipts").upsert(toDb(r)).select().single())); },
+    /* Many at once (bank statement); ids already in the database are left as they are. */
+    insertReceipts: list => q(client.from("receipts").upsert(list.map(toDb), { onConflict: "id", ignoreDuplicates: true })),
     async patchReceipt(id, patch) {
       const row = {};
       for (const [k, v] of Object.entries(patch)) row[{ bookId: "book_id" }[k] || k] = v;
