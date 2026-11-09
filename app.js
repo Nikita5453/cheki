@@ -867,12 +867,20 @@ async function recognizeNow(id, bookName) {
   else toast("Чек сохранён и ждёт распознавания. Можно заполнить его вручную");
 }
 
+/* Recognized rows may carry qty/unit (format: supabase/functions/recognize/receipt.ts). unitPrice follows the price:
+   recomputed on every save, dropped when the row has no quantity or its price is not above zero. */
+function withUnitPrice(it) {
+  const { unitPrice, ...rest } = it;
+  return it.qty > 0 && ["шт", "кг", "л"].includes(it.unit) && it.price > 0 ? { ...rest, unitPrice: r2(it.price / it.qty) } : rest;
+}
+
 async function saveDraft() {
   const d = S.draft; if (!d) return;
   if (d.simple) return saveSimple();
   const items = d.items
     .filter(it => String(it.name).trim() || num(it.price))
-    .map(it => ({
+    .map(it => withUnitPrice({
+      ...it,
       name: String(it.name).trim() || "Позиция",
       price: r2(num(it.price)),
       category: EXP.includes(it.category) ? it.category : "Другое",
@@ -951,7 +959,8 @@ document.addEventListener("click", async e => {
         openDraft(simpleDraft({ id: r.id, bookId: r.bookId, date: r.date || defaultDate(), photos: [...(r.photos || [])], isNew: !isDone(r) }, r.items));
         break;
       }
-      const items = (r.items || []).map(i => ({ name: i.name, price: toIn(i.price), category: i.category, type: i.type || "" }));
+      /* Keep every field of a row (product, qty, unit… from recognition), so saving does not drop them. */
+      const items = (r.items || []).map(i => ({ ...i, price: toIn(i.price), type: i.type || "" }));
       openDraft({
         id: r.id, bookId: r.bookId, store: r.store || "", date: r.date || today(), total: toIn(r.total),
         items: items.length ? items : [blankItem()], photos: [...(r.photos || [])], isNew: false
