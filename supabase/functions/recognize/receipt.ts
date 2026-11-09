@@ -38,12 +38,12 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const words = (v: unknown) => typeof v === "string" ? v.replace(/\s+/g, " ").trim() : "";
 
-/** A quantity as Gemini wrote it: a number, or a string like "0,734". Anything else is NaN. */
+/** A quantity as Gemini wrote it: a number, or a plain decimal string like "0,734". Anything else is NaN. */
 function qtyNum(v: unknown) {
   if (typeof v === "number") return v;
   if (typeof v !== "string") return NaN;
   const s = v.replace(/\s/g, "").replace(",", ".");
-  return s ? Number(s) : NaN;
+  return /^\d+(?:\.\d+)?$/.test(s) ? Number(s) : NaN;
 }
 
 const UNITS: Record<string, [string, number]> = {
@@ -54,18 +54,21 @@ const UNITS: Record<string, [string, number]> = {
 /** The checked qty/unit pair, or null when it is missing, invalid or contradicts a trailing «×N» in the name. */
 function quantity(it: Record<string, unknown>, name: string): { qty: number; unit: string } | null {
   if (typeof it.unit !== "string") return null;
-  const u = UNITS[it.unit.trim().toLowerCase().replace(/\.$/, "")];
+  const key = it.unit.trim().toLowerCase().replace(/\.$/, "");
+  // Own keys only: "constructor" or "__proto__" from Gemini must not find Object.prototype members.
+  const u = Object.hasOwn(UNITS, key) ? UNITS[key] : undefined;
   let qty = qtyNum(it.qty);
-  if (!u || !isFinite(qty) || qty <= 0) return null;
+  if (!u || !Number.isFinite(qty) || qty <= 0) return null;
   const unit = u[0];
   qty /= u[1];
   if (unit === "шт") {
     if (!Number.isInteger(qty) || qty > 1000) return null;
   } else {
     qty = r3(qty);
-    if (qty <= 0 || qty > 100) return null;
+    if (!Number.isFinite(qty) || qty <= 0 || qty > 100) return null;
   }
-  const x = name.match(/[×xх]\s*(\d+(?:[.,]\d+)?)\s*$/i);
+  // «×N» at the end of the name, not the end of a word like «Горох 400».
+  const x = name.match(/(?:^|[^\p{L}])[×xх]\s*(\d+(?:[.,]\d+)?)\s*$/iu);
   if (x) {
     const n = Number(x[1].replace(",", "."));
     if (Math.abs(n - qty) > 0.001 || (unit === "шт" && !Number.isInteger(n))) return null;

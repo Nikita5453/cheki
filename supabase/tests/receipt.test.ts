@@ -74,6 +74,30 @@ test("an unknown unit or half a pair drops the pair", () => {
   assert.deepEqual(pick(one({ qty: 2, unit: 5 }), NEW), {});
 });
 
+test("a unit named like an Object.prototype member drops the pair (no NaN or null is stored)", () => {
+  for (const unit of ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf"]) {
+    const it = one({ qty: 2, unit, product: "хлеб" });
+    assert.deepEqual(pick(it, NEW), { product: "хлеб" }, unit);
+    assert.ok(Object.values(it).every(v => v !== null && !Number.isNaN(v)), unit);
+  }
+});
+
+test("qty strings must be plain decimals", () => {
+  for (const qty of ["0x10", "1e2", "0b11", "Infinity", "2шт", "1.2.3", "-1", "+2"]) {
+    assert.deepEqual(pick(one({ qty, unit: "шт" }), NEW), {}, qty);
+  }
+  for (const qty of [Infinity, NaN]) assert.deepEqual(pick(one({ qty, unit: "кг" }), NEW), {}, String(qty));
+  assert.equal(one({ qty: " 1 000 ", unit: "шт" }).qty, 1000);
+});
+
+test("«×N» counts only after a non-letter, so «Горох 400» is not a quantity", () => {
+  assert.deepEqual(pick(one({ name: "Горох 400", qty: 1, unit: "шт" }), ["qty"]), { qty: 1 });
+  assert.deepEqual(pick(one({ name: "Pepsi Max 2", qty: 1, unit: "шт" }), ["qty"]), { qty: 1 });
+  assert.deepEqual(pick(one({ name: "Big Box 2", qty: 1, unit: "шт" }), ["qty"]), { qty: 1 });
+  assert.deepEqual(pick(one({ name: "Хлеб ×2", qty: 1, unit: "шт" }), NEW), {});
+  assert.deepEqual(pick(one({ name: "×3", qty: 1, unit: "шт" }), NEW), {});
+});
+
 test("a trailing «×N» in the name must agree with qty", () => {
   assert.deepEqual(pick(one({ name: "Бананы ×1.08", qty: 1, unit: "кг" }), NEW), {});
   assert.deepEqual(pick(one({ name: "Бананы ×1,08", qty: 1.08, unit: "кг" }), ["qty", "unit"]), { qty: 1.08, unit: "кг" });
