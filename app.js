@@ -272,6 +272,7 @@ function render() {
   renderMe();
   renderBooks();
   renderBudget(st);
+  renderRecapNote(st);
   $("byCat").innerHTML = bars(st.cat, "cat");
   $("byType").innerHTML = bars(st.typ, "typ");
   renderList(st);
@@ -339,6 +340,7 @@ function renderBudget(st) {
   const back = live ? "" : `<p class="hint">Новые чеки сейчас добавляются в этот месяц.</p>
     <div><button class="btn small" type="button" data-act="month-now">К текущему месяцу</button></div>`;
   const who = whoSpent(c);
+  const recap = c.rs.length ? `<div class="row"><button class="btn small recap-btn" type="button" data-act="recap" data-k="${c.k}">Итоги месяца${live ? '<span class="tag">пока что</span>' : ""}</button></div>` : "";
 
   if (c.budget == null) {
     el.innerHTML = `${head}
@@ -349,6 +351,7 @@ function renderBudget(st) {
         <div><dt>В среднем тратили в день</dt><dd>${money(avg)}</dd></div>
         <div><dt>Чеков за месяц</dt><dd>${c.rs.length}</dd></div>
       </dl>
+      ${recap}
       ${back}
       ${past.length ? `<div class="rule"></div>
       <span class="eyebrow">Прошлые месяцы</span>
@@ -382,6 +385,7 @@ function renderBudget(st) {
       <div><dt>В среднем тратили в день</dt><dd>${money(avg)}</dd></div>
       <div><dt>Чеков за месяц</dt><dd>${c.rs.length}</dd></div>
     </dl>
+    ${recap}
     ${back}
     ${past.length ? `<div class="rule"></div>
     <span class="eyebrow">Прошлые месяцы</span>
