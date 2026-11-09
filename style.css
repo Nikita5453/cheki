@@ -365,3 +365,20 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
   .rc-detail .items tr.hit { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
   .rc-detail .items tr.hit td { background: none; box-shadow: none; }
 }
+/* CHK-7: month recap */
+.recap-btn .tag { margin-left: 2px; }
+.notice.recap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 4px 6px 14px; }
+.notice.recap .recap-text { flex: 1 1 220px; min-width: 0; }
+.notice.recap .recap-go { display: flex; align-items: center; gap: 4px; }
+.notice.recap .x { width: 44px; height: 44px; padding: 0; border-radius: 8px; }
+.notice.recap .x:hover { color: var(--ink); background: var(--paper); }
+.sheet.recap-sheet { max-width: 520px; }
+.recap-frame { display: grid; place-items: center; }
+.recap-img { display: block; max-width: 100%; max-height: min(62vh, 620px); width: auto; height: auto; border-radius: 12px; border: 1px solid var(--line); }
+.recap-wait { display: grid; place-content: center; justify-items: center; gap: 10px; width: min(100%, calc(min(62vh, 620px) * .8)); aspect-ratio: 4 / 5;
+  border-radius: 12px; background: var(--bg); color: var(--muted); font-size: 14px; }
+.recap-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.chip.tall { min-height: 44px; }
+.recap-act { justify-content: flex-end; }
+.recap-act .btn { min-height: 48px; justify-content: center; }
+@media (max-width: 720px) { .recap-act .btn { flex: 1 1 100%; } }
