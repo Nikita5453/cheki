@@ -3,8 +3,18 @@
   python supabase/admin.py info          — find the «cheki» project, save its URL and keys into .env (not printed)
   python supabase/admin.py sql FILE      — run a SQL file on the project
   python supabase/admin.py auth K=V ...  — update auth settings (values may be @ENV_NAME to read from .env)
+  python supabase/admin.py functions     — list deployed Edge Functions (slug, version, status, updated_at)
+  python supabase/admin.py deploy NAME [--from GITREF] [--dry-run]
+                                         — upload every *.ts of supabase/functions/NAME (index.ts is the entrypoint,
+                                           *.test.ts skipped). --from takes the files from a git commit instead of the
+                                           working tree (that is how to roll back); --dry-run only lists the files.
+  python supabase/admin.py secret K=V ...— set Edge Function secrets (values may be @ENV_NAME to read from .env)
+
+Run it from the main checkout: the token is read from .env next to this folder and is never printed.
 """
+import hashlib
 import json
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -109,16 +119,47 @@ def auth(pairs):
     print({k: cfg.get(k) for k in body if "secret" not in k})
 
 
-def deploy(name):
-    """Upload supabase/functions/<name>/index.ts as an Edge Function (multipart: metadata + file)."""
-    src = (ROOT / "supabase" / "functions" / name / "index.ts").read_bytes()
-    boundary = "----cheki" + str(abs(hash(src)))
+def function_files(name, ref=None):
+    """{relative path: bytes} of the function's TypeScript files, from the working tree or from git commit `ref`."""
+    folder = f"supabase/functions/{name}"
+    if ref:
+        listed = subprocess.run(["git", "-C", str(ROOT), "ls-tree", "-r", "--name-only", ref, "--", folder + "/"],
+                                capture_output=True, text=True, check=True).stdout.split()
+        paths = [p[len(folder) + 1:] for p in listed]
+        read = lambda rel: subprocess.run(["git", "-C", str(ROOT), "show", f"{ref}:{folder}/{rel}"],
+                                          capture_output=True, check=True).stdout
+    else:
+        base = ROOT / folder
+        paths = [p.relative_to(base).as_posix() for p in base.rglob("*.ts")]
+        read = lambda rel: (base / rel).read_bytes()
+    files = {rel: read(rel) for rel in sorted(paths) if rel.endswith(".ts") and not rel.endswith(".test.ts")}
+    if "index.ts" not in files:
+        sys.exit(f"no index.ts in {folder}" + (f" at {ref}" if ref else ""))
+    return files
+
+
+def deploy(name, args):
+    """Upload a function as multipart: one metadata part plus one `file` part per source file (path relative to its folder)."""
+    ref = args[args.index("--from") + 1] if "--from" in args else None
+    files = function_files(name, ref)
+    print(f"{name}: {len(files)} files" + (f" from {ref}" if ref else " from the working tree"))
+    for rel, data in files.items():
+        print(f"  {rel}  {len(data)} bytes  sha256 {hashlib.sha256(data).hexdigest()[:12]}")
+    if "--dry-run" in args:
+        print("dry run: nothing uploaded")
+        return
+    boundary = "----cheki" + hashlib.sha256(b"".join(files.values())).hexdigest()[:24]
     meta = json.dumps({"name": name, "entrypoint_path": "index.ts", "verify_jwt": True}).encode()
-    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\nContent-Type: application/json\r\n\r\n".encode()
-            + meta + f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"index.ts\"\r\n"
-                     f"Content-Type: application/typescript\r\n\r\n".encode()
-            + src + f"\r\n--{boundary}--\r\n".encode())
+    nl = b"\r\n"
+    parts = [b"Content-Disposition: form-data; name=\"metadata\"" + nl + b"Content-Type: application/json" + nl + nl + meta]
+    for rel, data in files.items():
+        parts.append(f"Content-Disposition: form-data; name=\"file\"; filename=\"{rel}\"".encode() + nl
+                     + b"Content-Type: application/typescript" + nl + nl + data)
+    sep = f"--{boundary}".encode()
+    body = b"".join(sep + nl + p + nl for p in parts) + sep + b"--" + nl
     token = read_env().get("SUPABASE_ACCESS_TOKEN", "")
+    if not token:
+        sys.exit("SUPABASE_ACCESS_TOKEN is empty in .env")
     req = urllib.request.Request(f"{API}/projects/{project()}/functions/deploy?slug={name}", method="POST", data=body,
                                  headers={"Authorization": "Bearer " + token, "User-Agent": "cheki-admin",
                                           "Content-Type": f"multipart/form-data; boundary={boundary}"})
@@ -127,7 +168,12 @@ def deploy(name):
             res = json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         sys.exit(f"HTTP {e.code} on deploy: {e.read().decode()[:600]}")
-    print({k: res.get(k) for k in ("slug", "status", "version", "verify_jwt")})
+    print({k: res.get(k) for k in ("slug", "status", "version", "verify_jwt", "entrypoint_path", "updated_at")})
+
+
+def functions():
+    for f in call("GET", f"/projects/{project()}/functions"):
+        print({k: f.get(k) for k in ("slug", "version", "status", "verify_jwt", "updated_at")})
 
 
 def secret(pairs):
@@ -144,4 +190,5 @@ def secret(pairs):
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "info"
     {"info": lambda: info(), "sql": lambda: sql(sys.argv[2]), "auth": lambda: auth(sys.argv[2:]),
-     "deploy": lambda: deploy(sys.argv[2]), "secret": lambda: secret(sys.argv[2:])}[cmd]()
+     "deploy": lambda: deploy(sys.argv[2], sys.argv[3:]), "secret": lambda: secret(sys.argv[2:]),
+     "functions": lambda: functions()}[cmd]()
