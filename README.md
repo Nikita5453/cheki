@@ -13,6 +13,7 @@
   отдаёт фото Claude Code CLI (`claude -p`, лимиты подписки Claude) и записывает позиции и категории обратно.
   Ключ `SUPABASE_SERVICE_KEY` лежит только в локальном `.env`. Запуск: `Распознавание чеков.bat`.
 
-Служебное: `supabase/admin.py` (настройка проекта через Management API), `supabase/migrate.py` (разовый перенос старых данных из GitHub).
+Служебное: `supabase/admin.py` (настройка проекта и деплой функций через Management API), `supabase/migrate.py` (разовый перенос старых данных из GitHub),
+`supabase/rerecognize.ts` (разовое перераспознавание старых чеков для новых полей позиций, `node supabase/rerecognize.ts`).
 
 Настройки скрипта через переменные окружения: `CHEKI_MODEL` (`sonnet` по умолчанию, `haiku` экономнее), `CHEKI_INTERVAL` (секунды между проверками, 30).
