@@ -1,12 +1,8 @@
 // Распознавание чека через Gemini. Сайт вызывает функцию сразу после загрузки фото: { id: "<id чека>" }.
 // Ключ Gemini хранится в секретах проекта (GEMINI_API_KEY) и в браузер не попадает.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
-
-const EXP = ["Продукты", "Хозтовары и бытовая химия", "Кафе и доставка", "Аптека и здоровье", "Транспорт и топливо",
-  "Одежда и обувь", "Дом и ремонт", "Связь и подписки", "Дети", "Животные", "Красота и уход", "Развлечения", "Другое"];
-const FOOD = ["Молочное", "Яйца", "Мясо и птица", "Рыба и морепродукты", "Овощи", "Фрукты и ягоды", "Хлеб и выпечка",
-  "Крупы, макароны, мука", "Бакалея и консервы", "Масло, соусы, специи", "Сладости и снеки", "Чай и кофе", "Напитки",
-  "Алкоголь", "Готовая еда", "Замороженное"];
+// The prompt, the request settings and the checks on Gemini's answer (item format: see clean() there).
+import { clean, geminiBody, prompt } from "./receipt.ts";
 
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash-lite";
 const DAILY_LIMIT = Number(Deno.env.get("DAILY_LIMIT") ?? "20");
@@ -17,40 +13,6 @@ const cors = {
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
-
-function prompt(today: string) {
-  return `Перед тобой фото кассового чека. Если фото несколько, это части одного длинного чека по порядку.
-Верни только JSON такого вида:
-{"store": "Название магазина", "date": "YYYY-MM-DD", "total": 1234.5, "items": [{"name": "Молоко 2,5% 0,9 л", "price": 42.9, "category": "Продукты", "type": "Молочное"}]}
-
-Правила:
-- Валюта — гривны. Чек может быть на украинском или русском; name пиши по-русски.
-- store: короткое название магазина или заведения, как его называют люди (без ТОВ/ФОП, адреса и кодов).
-- date: дата покупки из чека в формате YYYY-MM-DD; если не читается, null. Сегодня ${today}.
-- items: каждая строка товара или услуги. price — итоговая сумма по строке с учётом количества и скидки на строку, числом. name — понятное короткое название без артикулов и кодов; если количество больше одного, допиши «×N».
-- category: строго одно значение из списка: ${EXP.join("; ")}.
-- type: вид продукта. Для еды и напитков строго одно значение из списка: ${FOOD.join("; ")}. Сливочное масло, сыр, йогурт, кефир, сметана — «Молочное». Для остального — короткий общий вид в 1–3 слова, например «Моющие средства», «Лекарства», «Бензин», «Корм».
-- Если в чеке есть общая скидка, оплата бонусами или округление, добавь отдельную строку с отрицательной price (name «Скидка»), category и type как у большей части покупок, чтобы сумма всех price равнялась total.
-- total: сумма к оплате по чеку, числом.
-- Если на фото не чек или его невозможно прочитать, верни {"error": "коротко, что не так"}.`;
-}
-
-const num = (v: unknown) => { const n = parseFloat(String(v ?? "").replace(/\s/g, "").replace(",", ".")); return isFinite(n) ? Math.round(n * 100) / 100 : 0; };
-
-function clean(res: Record<string, unknown>) {
-  const items = (Array.isArray(res.items) ? res.items : [])
-    .filter((it): it is Record<string, unknown> => !!it && typeof it === "object")
-    .map(it => ({
-      name: String(it.name ?? "").trim() || "Позиция",
-      price: num(it.price),
-      category: EXP.includes(String(it.category)) ? String(it.category) : "Другое",
-      type: String(it.type ?? "").trim(),
-    }))
-    .filter(it => it.name !== "Позиция" || it.price);
-  const total = res.total != null ? num(res.total) : Math.round(items.reduce((s, i) => s + i.price, 0) * 100) / 100;
-  const d = String(res.date ?? "");
-  return { store: String(res.store ?? "").trim(), date: /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null, total, items };
-}
 
 function base64(bytes: Uint8Array) {
   let s = "";
@@ -99,7 +61,7 @@ Deno.serve(async (req) => {
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": Deno.env.get("GEMINI_API_KEY") ?? "" },
-    body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseMimeType: "application/json", temperature: 0 } }),
+    body: JSON.stringify(geminiBody(parts)),
   });
   if (r.status === 429) return fail("сервис распознавания сейчас перегружен. Нажмите «Распознать ещё раз» через минуту");
   if (!r.ok) return fail(`сервис распознавания вернул ошибку ${r.status}`);
